@@ -1,0 +1,3 @@
+libzbar0
+chromium
+chromium-driver
