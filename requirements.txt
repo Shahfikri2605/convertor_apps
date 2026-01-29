@@ -5,3 +5,11 @@ gspread
 oauth2client
 streamlit-authenticator
 openpyxl
+google-generativeai
+pdfplumber
+pymupdf
+opencv-python-headless
+pyzbar
+selenium
+webdriver-manager
+numpy
