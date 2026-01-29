@@ -2,7 +2,7 @@ import streamlit as st
 import streamlit_authenticator as stauth
 from app import main_app_interface, get_gspread_client, make_url
 
-
+st.set_page_config(page_title="Zenxin Data Extractor", page_icon="🤖", layout="wide")
 @st.cache_data(ttl=600)
 def get_users_from_sheet(url):
     try:
@@ -66,4 +66,5 @@ if credentials:
         user_perms = permissions.get(user, {"systems": ["ALL"], "stores": ["ALL"]})
         
         # 3. Launch Main App
+
         main_app_interface(authenticator, st.session_state["name"], user_perms)
