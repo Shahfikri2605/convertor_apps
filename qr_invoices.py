@@ -1,7 +1,7 @@
-# qr_invoice_processor.py
+
 import re
 import os
-import fitz  # PyMuPDF
+import fitz  
 import cv2
 import numpy as np
 import pandas as pd
@@ -176,4 +176,5 @@ def extract_with_ai(pdf_path, found_uuid=None, api_key=""):
 
     except Exception as e:
         print(f" [AI Error]: {e}")
+
         return {}
