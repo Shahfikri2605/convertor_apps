@@ -10,8 +10,7 @@ import qr_invoices
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- CONFIGURATION ---
-# ⚠️ PASTE YOUR API KEY HERE
+
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
 
 genai.configure(api_key=GENAI_API_KEY)
