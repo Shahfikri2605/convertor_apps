@@ -3,4 +3,5 @@ pandas
 xlsxwriter
 gspread
 oauth2client
+streamlit-authenticator
 openpyxl
