@@ -1,4 +1,3 @@
-
 import re
 import os
 import fitz  
@@ -54,6 +53,7 @@ def get_uuid_from_url(url):
     chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
+    # Helper to prevent detection
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
     driver = None
@@ -61,11 +61,11 @@ def get_uuid_from_url(url):
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get(url)
-        time.sleep(5) 
+        time.sleep(5) # Wait for LHDN to load
         
         page_text = driver.find_element("tag name", "body").text
         
-      
+        # Search for UUID patterns
         match = re.search(r'([A-Z0-9]{8,}-[A-Z0-9]{8,})', page_text, re.IGNORECASE)
         if not match:
              match = re.search(r'UUID[:\s]*([a-zA-Z0-9-]+)', page_text, re.IGNORECASE)
@@ -86,19 +86,20 @@ def process_single_invoice(pdf_bytes, filename, api_key):
     """
     genai.configure(api_key=api_key)
     
+    # Save bytes to a temporary file for processing
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(pdf_bytes)
         temp_path = tmp.name
 
     try:
-      
+        # 1. Try QR Code First
         qr_link = extract_qr_from_pdf(temp_path)
         uuid = get_uuid_from_url(qr_link)
         
-       
+        # 2. Extract Data via AI
         ai_data = extract_with_ai(temp_path, found_uuid=uuid, api_key=api_key)
         
-    
+        # 3. Clean up data rows
         rows = []
         items = ai_data.get("Items", [])
         if not items:
@@ -110,14 +111,14 @@ def process_single_invoice(pdf_bytes, filename, api_key):
                 "Bill To": ai_data.get("Bill To", ""),
                 "Invoice No.": ai_data.get("Invoice No", ""),
                 "Invoice Date": ai_data.get("Invoice Date", ""),
-                "UUID": ai_data.get("UUID", uuid if uuid else ""), 
-                "No": item.get("No", ""),
-                "Item/ Cross Ref No": item.get("Item/ Cross Ref No", ""),
-                "Description": item.get("Description", ""),
-                "Discount Amount": item.get("Discount Amount", ""),
-                "Amount": item.get("Amount", ""),
-                "Total Amount": ai_data.get("Total Amount", ""),
-                "Total Discount": ai_data.get("Total Discount", ""),
+                "UUID": ai_data.get("UUID", uuid if uuid else ""), # Use scanned UUID if AI misses it
+                # "No": item.get("No", ""),
+                # "Item/ Cross Ref No": item.get("Item/ Cross Ref No", ""),
+                # "Description": item.get("Description", ""),
+                # "Discount Amount": item.get("Discount Amount", ""),
+                # "Amount": item.get("Amount", ""),
+                # "Total Amount": ai_data.get("Total Amount", ""),
+                # "Total Discount": ai_data.get("Total Discount", ""),
                 "Total MYR": ai_data.get("Total MYR", "")
             }
             rows.append(row)
@@ -141,6 +142,7 @@ def extract_with_ai(pdf_path, found_uuid=None, api_key=""):
             sample_file = genai.get_file(sample_file.name)
 
         model = genai.GenerativeModel("gemini-3-flash-preview") 
+
         uuid_instruction = ""
         if not found_uuid or found_uuid in ["Not Found", "Error"]:
             uuid_instruction = '"UUID": "Extract the UUID visible on the document (usually 32 chars long)",'
@@ -173,6 +175,4 @@ def extract_with_ai(pdf_path, found_uuid=None, api_key=""):
 
     except Exception as e:
         print(f" [AI Error]: {e}")
-
         return {}
-
