@@ -10,6 +10,8 @@ import qr_invoices
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import tfp_processor
+import maslee_processor
+import aeon_processor
 
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
@@ -135,6 +137,78 @@ def main_app_interface(authenticator, name, permissions):
                 status_text.text("✅ TFP Processing Complete!")
                 st.rerun()
 
+        elif mode == "Maslee":
+            st.info("ℹ️ Mode: Maslee/Retail (Regex + AI Fallback).")
+            
+            if st.button("Extract Maslee Data", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, file_obj in enumerate(uploaded_files):
+                    status_text.text(f"Processing {file_obj.name}...")
+                    
+                    # Call the new function
+                    rows = maslee_processor.extract_data_from_pdf(
+                        file_obj.getvalue(), 
+                        file_obj.name,
+                        GENAI_API_KEY
+                    )
+                    
+                    if rows:
+                        st.session_state.master_data.extend(rows)
+                    else:
+                        st.warning(f"No data found in {file_obj.name}")
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                status_text.text("✅ Maslee Processing Complete!")
+                st.rerun()
+        elif mode =="Aeon":
+            st.info("ℹ️ Mode: AEON (Auto-aggregates Invoices by Store). Output has multiple sheets.")
+            
+            if st.button("Process AEON Files", type="primary"):
+                all_dfs = []
+                file_summary = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                # 1. Extract Raw Data from all files
+                for i, file_obj in enumerate(uploaded_files):
+                    status_text.text(f"Scanning {file_obj.name}...")
+                    try:
+                        df = aeon_processor.extract_aeon_raw_data(file_obj.getvalue(), file_obj.name)
+                        if not df.empty:
+                            df['SOURCE_FILE'] = file_obj.name
+                            all_dfs.append(df)
+                            file_summary.append((file_obj.name, len(df)))
+                        else:
+                            file_summary.append((file_obj.name, 0))
+                    except Exception as e:
+                        file_summary.append((file_obj.name, f"Error: {e}"))
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+
+                # 2. Process & Generate Excel
+                if all_dfs:
+                    combined_df = pd.concat(all_dfs, ignore_index=True)
+                    excel_data, preview_df = aeon_processor.generate_aeon_excel(combined_df, file_summary)
+                    
+                    st.success("✅ AEON Processing Complete!")
+                    
+                    # Display Preview (Just the Invoice Sheet)
+                    if not preview_df.empty:
+                        st.subheader("Preview (INVOICE Sheet)")
+                        st.dataframe(preview_df, use_container_width=True)
+                    
+                    # Download Button
+                    st.download_button(
+                        label="📥 Download AEON Report (Multi-Sheet)",
+                        data=excel_data.getvalue(),
+                        file_name="AEON_Consolidated_Report.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.error("No valid AEON data found in uploaded files.")
 
         # === MODE 2: STANDARD EXTRACTION ===
         else:
