@@ -9,6 +9,7 @@ from io import BytesIO
 import qr_invoices
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import tfp_processor
 
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
@@ -54,7 +55,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)"])
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon", "TFP/Global"])
 
         st.markdown("---")
 
@@ -110,6 +111,30 @@ def main_app_interface(authenticator, name, permissions):
                 
                 status_text.text("✅ Batch processing complete!")
                 st.rerun()
+        
+        elif mode == "TFP/Global":
+            st.info("ℹ️ Mode: TFP Retail / Global Report Extraction (Specific Format).")
+            
+            if st.button("Extract TFP Data", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, file_obj in enumerate(uploaded_files):
+                    status_text.text(f"Processing {file_obj.name}...")
+                    
+                    # Call the new function
+                    rows = tfp_processor.process_tfp_pdf(file_obj, file_obj.name)
+                    
+                    if rows:
+                        st.session_state.master_data.extend(rows)
+                    else:
+                        st.warning(f"No data found in {file_obj.name}")
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                status_text.text("✅ TFP Processing Complete!")
+                st.rerun()
+
 
         # === MODE 2: STANDARD EXTRACTION ===
         else:
