@@ -13,6 +13,8 @@ import tfp_processor
 import maslee_processor
 import aeon_processor
 import urban_processor
+import jaya_processor
+import isetan_processor
 
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
@@ -58,7 +60,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon", "TFP/Global", "Urban"])
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)"])
 
         st.markdown("---")
 
@@ -210,7 +212,7 @@ def main_app_interface(authenticator, name, permissions):
                     )
                 else:
                     st.error("No valid AEON data found in uploaded files.")
-        elif mode == "Urban":
+        elif mode == "Urban (AI)":
             st.info("ℹ️ Mode: Urban Grocery (Full AI Scan + Cleaning).")
 
             if st.button("Extract Urban Data", type="primary"):
@@ -234,6 +236,59 @@ def main_app_interface(authenticator, name, permissions):
                 
                 status_text.text("✅ Urban Processing Complete!")
                 st.rerun()
+        elif mode == "Jaya Grocer (AI)":
+            st.info("ℹ️ Mode: Jaya Grocer (ZA02 Consignment). Includes Auto-Total Calculation.")
+            
+            if st.button("Extract Jaya Data", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, file_obj in enumerate(uploaded_files):
+                    status_text.text(f"Processing {file_obj.name}...")
+                    
+                    # Call the new function
+                    rows = jaya_processor.process_jaya_pdf(
+                        file_obj.getvalue(), 
+                        file_obj.name,
+                        GENAI_API_KEY
+                    )
+                    
+                    if rows:
+                        st.session_state.master_data.extend(rows)
+                    else:
+                        st.warning(f"No data found in {file_obj.name}")
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                status_text.text("✅ Jaya Processing Complete!")
+                st.rerun()
+        elif mode == "iSetan (AI)":
+            st.info("ℹ️ Mode: iSetan (Extracts Item Code, Name, Qty, Unit Price).")
+            
+            if st.button("Extract iSetan Data", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, file_obj in enumerate(uploaded_files):
+                    status_text.text(f"Processing {file_obj.name}...")
+                    
+                    # Call the new function
+                    rows = isetan_processor.process_isetan_pdf(
+                        file_obj.getvalue(), 
+                        file_obj.name,
+                        GENAI_API_KEY
+                    )
+                    
+                    if rows:
+                        st.session_state.master_data.extend(rows)
+                    else:
+                        st.warning(f"No data found in {file_obj.name}")
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                status_text.text("✅ iSetan Processing Complete!")
+                st.rerun()
+
         # === MODE 2: STANDARD EXTRACTION ===
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
