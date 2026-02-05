@@ -12,6 +12,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import tfp_processor
 import maslee_processor
 import aeon_processor
+import urban_processor
 
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
@@ -57,7 +58,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon", "TFP/Global"])
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon", "TFP/Global", "Urban"])
 
         st.markdown("---")
 
@@ -209,7 +210,30 @@ def main_app_interface(authenticator, name, permissions):
                     )
                 else:
                     st.error("No valid AEON data found in uploaded files.")
+        elif mode == "Urban":
+            st.info("ℹ️ Mode: Urban Grocery (Full AI Scan + Cleaning).")
 
+            if st.button("Extract Urban Data", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                for i, file_obj in enumerate(uploaded_files):
+                    status_text.text(f"Uploading & Scanning {file_obj.name} with AI ..")
+
+                    rows = urban_processor.process_urban_pdf(
+                        file_obj.getvalue(),
+                        file_obj.name,
+                        GENAI_API_KEY
+                    )
+
+                    if rows:
+                        st.session_state.master_data.extend(rows)
+                    else:
+                        st.warning(f"No data found in {file_obj.name}")
+                    progress_bar.progress((i+1)/len(uploaded_files))
+                
+                status_text.text("✅ Urban Processing Complete!")
+                st.rerun()
         # === MODE 2: STANDARD EXTRACTION ===
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
