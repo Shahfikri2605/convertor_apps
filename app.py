@@ -121,24 +121,25 @@ def main_app_interface(authenticator, name, permissions):
             st.info("ℹ️ Mode: TFP Retail / Global Report Extraction (Specific Format).")
             
             if st.button("Extract TFP Data", type="primary"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for i, file_obj in enumerate(uploaded_files):
-                    status_text.text(f"Processing {file_obj.name}...")
+                with st.spinner("Processing large file... Please wait, do not refresh."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
                     
-                    # Call the new function
-                    rows = tfp_processor.process_tfp_pdf(file_obj, file_obj.name)
+                    for i, file_obj in enumerate(uploaded_files):
+                        status_text.text(f"Processing {file_obj.name}...")
+                        
+                        # Call the new function
+                        rows = tfp_processor.process_tfp_pdf(file_obj.getvalue(), file_obj.name)
+                        
+                        if rows:
+                            st.session_state.master_data.extend(rows)
+                        else:
+                            st.warning(f"No data found in {file_obj.name}")
+                        
+                        progress_bar.progress((i + 1) / len(uploaded_files))
                     
-                    if rows:
-                        st.session_state.master_data.extend(rows)
-                    else:
-                        st.warning(f"No data found in {file_obj.name}")
-                    
-                    progress_bar.progress((i + 1) / len(uploaded_files))
-                
-                status_text.text("✅ TFP Processing Complete!")
-                st.rerun()
+                    status_text.text("✅ TFP Processing Complete!")
+                    st.rerun()
 
         elif mode == "Maslee":
             st.info("ℹ️ Mode: Maslee/Retail (Regex + AI Fallback).")
