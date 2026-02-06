@@ -25,7 +25,11 @@ def process_tfp_pdf(pdf_bytes, filename):
             last_desc = ""
             last_item_no = ""
 
+            total_pages = len(pdf.pages)
+            print(f"Processing {total_pages} pages in {filename}...")
             for i, page in enumerate(pdf.pages):
+                if i % 50 == 0:
+                    print (f"..Scanning Page {i}/{total_pages}")
                 table = page.extract_table()
                 if not table:
                     continue
@@ -137,6 +141,7 @@ def process_tfp_pdf(pdf_bytes, filename):
                             "Total Excl Tax": total_exc,
                             "Cost Excl Tax": cost_exc
                         })
+                page.flush_cache()                
                         
         return rows
 
