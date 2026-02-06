@@ -1,6 +1,7 @@
 import pdfplumber
 import re
 import os
+import tempfile
 
 def process_tfp_pdf(pdf_bytes, filename):
     """
@@ -8,10 +9,14 @@ def process_tfp_pdf(pdf_bytes, filename):
     Returns a list of dictionaries (rows).
     """
     rows = []
+    temp_path = None
     
     try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(pdf_bytes)
+            temp_path=tmp.name
         # Open the PDF from bytes (Streamlit upload)
-        with pdfplumber.open(pdf_bytes) as pdf:
+        with pdfplumber.open(temp_path) as pdf:
             
             # STATE VARIABLES
             last_store = "Unknown"
@@ -138,3 +143,9 @@ def process_tfp_pdf(pdf_bytes, filename):
     except Exception as e:
         print(f"TFP Error: {e}")
         return []
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
