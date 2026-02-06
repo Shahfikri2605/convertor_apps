@@ -13,4 +13,4 @@ pyzbar
 selenium
 webdriver-manager
 numpy
-
+google-genai
