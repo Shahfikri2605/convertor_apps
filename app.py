@@ -15,6 +15,7 @@ import aeon_processor
 import urban_processor
 import jaya_processor
 import isetan_processor
+import kastam_processor
 
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
@@ -60,7 +61,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)"])
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)"])
 
         st.markdown("---")
 
@@ -289,7 +290,32 @@ def main_app_interface(authenticator, name, permissions):
                 
                 status_text.text("✅ iSetan Processing Complete!")
                 st.rerun()
-
+        elif mode == "Kastam (AI)":
+            st.info("ℹ️ Mode: Kastam (Page-by-Page Scan). SLOW but Safe.")
+            
+            if st.button("Extract Kastam Data", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, file_obj in enumerate(uploaded_files):
+                    status_text.text(f"Scanning {file_obj.name} (Please wait)...")
+                    
+                    # Call the function (matches your old syntax style)
+                    rows = kastam_processor.process_kastam_pdf(
+                        file_obj.getvalue(), 
+                        file_obj.name,
+                        GENAI_API_KEY
+                    )
+                    
+                    if rows:
+                        st.session_state.master_data.extend(rows)
+                    else:
+                        st.warning(f"No data found in {file_obj.name}")
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                status_text.text("✅ Kastam Processing Complete!")
+                st.rerun()
         # === MODE 2: STANDARD EXTRACTION ===
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
