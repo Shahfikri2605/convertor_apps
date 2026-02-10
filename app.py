@@ -61,7 +61,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)"])
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)"])
 
         st.markdown("---")
 
@@ -168,7 +168,7 @@ def main_app_interface(authenticator, name, permissions):
                 
                 status_text.text("✅ Maslee Processing Complete!")
                 st.rerun()
-        elif mode =="Aeon":
+        elif mode =="Aeon Sales & Commission":
             st.info("ℹ️ Mode: AEON (Auto-aggregates Invoices by Store). Output has multiple sheets.")
             
             if st.button("Process AEON Files", type="primary"):
