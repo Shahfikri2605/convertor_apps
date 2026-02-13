@@ -16,6 +16,7 @@ import urban_processor
 import jaya_processor
 import isetan_processor
 import kastam_processor
+import boost
 
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
@@ -61,7 +62,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)"])
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost"])
 
         st.markdown("---")
 
@@ -316,6 +317,54 @@ def main_app_interface(authenticator, name, permissions):
                 
                 status_text.text("✅ Kastam Processing Complete!")
                 st.rerun()
+        elif mode == "Boost":
+            st.info("ℹ️ Mode: Boost (Combines CSVs + Formats Table).")
+
+            # --- Boost Specific Inputs ---
+            col1, col2 = st.columns(2)
+            with col1:
+                report_month = st.text_input("Report Month", value="JAN 2026")
+                outlet_name = st.text_input("Outlet Name", value="CHENG OUTLET")
+            with col2:
+                company_name = st.text_input("Company Name", value="ZENXIN AGRI-ORGANIC FOOD (MELAKA) SDN BHD")
+                bank_account = st.text_input("Bank Details", value="OCBC - 715-110808-8")
+            
+            # --- Override File Uploader for CSV ---
+            # Note: The main uploader is for PDF. We can show a second one or tell user to use PDF uploader (if we change allowed types).
+            # BETTER UX: Add a specific CSV uploader inside this block.
+            boost_files = st.file_uploader("Choose Boost CSV files", accept_multiple_files=True, type=['csv'], key="boost_uploader")
+
+            if boost_files:
+                if st.button("Process Boost Files", type="primary"):
+                    try:
+                        # Call Processor
+                        excel_data, preview_df = boost.process_boost_files(
+                            boost_files, 
+                            report_month, 
+                            outlet_name, 
+                            company_name, 
+                            bank_account
+                        )
+                        
+                        if excel_data:
+                            st.success("✅ Boost Processing Complete!")
+                            
+                            st.subheader("Preview Data")
+                            st.dataframe(preview_df.head(), use_container_width=True)
+                            
+                            file_name = f"Boost_Table_{report_month.replace(' ', '_')}.xlsx"
+                            
+                            st.download_button(
+                                label="📥 Download Formatted Excel",
+                                data=excel_data.getvalue(),
+                                file_name=file_name,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        else:
+                            st.error("No valid transactions found in the uploaded CSVs.")
+                            
+                    except Exception as e:
+                        st.error(f"Error: {e}")
         # === MODE 2: STANDARD EXTRACTION ===
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
