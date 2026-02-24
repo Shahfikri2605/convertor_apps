@@ -38,6 +38,7 @@ def process_kastam_pdf(pdf_bytes, filename, api_key):
         Return ONLY valid JSON.
         
         Target Columns:
+        - Invoice_No (Invoice Number/No)
         - Decl_Date (Declaration Date)
         - Lorry_No (Vehicle Number)
         - Goods (Description of Goods)
@@ -49,6 +50,7 @@ def process_kastam_pdf(pdf_bytes, filename, api_key):
         {
           "Line_Items": [
             {
+              "Invoice_No": "string",
               "Decl_Date": "string",
               "Lorry_No": "string",
               "Goods": "string",
