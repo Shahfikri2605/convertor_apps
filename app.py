@@ -17,7 +17,7 @@ import jaya_processor
 import isetan_processor
 import kastam_processor
 import boost
-
+import pbb_processor
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
 
@@ -62,7 +62,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost"])
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)"], index=0)
 
         st.markdown("---")
 
@@ -365,6 +365,52 @@ def main_app_interface(authenticator, name, permissions):
                             
                     except Exception as e:
                         st.error(f"Error: {e}")
+        elif mode == "Public Bank (PBB)":
+            #st.info("ℹ️ Mode: Public Bank (Combines Multiple PDFs -> Formats like Boost Table).")
+
+            # --- Inputs ---
+            col1, col2 = st.columns(2)
+            with col1:
+                report_month = st.text_input("Report Month", value="DEC 2025")
+                outlet_name = st.text_input("Outlet Name", value="CHENG OUTLET")
+            with col2:
+                company_name = st.text_input("Company Name", value="ZENXIN AGRI-ORGANIC FOOD (MELAKA) SDN BHD")
+                bank_account = st.text_input("Bank Details", value="OCBC - 715-110808-8")
+            
+            # Use main uploader
+            if uploaded_files:
+                if st.button("Process Public Bank Files", type="primary"):
+                    try:
+                        # FIX: Pass 'uploaded_files' (the whole list), not just one file
+                        excel_data, preview_df = pbb_processor.process_publicbank_files(
+                            uploaded_files,
+                            report_month,
+                            outlet_name,
+                            company_name,
+                            bank_account
+                        )
+                        
+                        if excel_data:
+                            st.success(f"✅ Combined {len(uploaded_files)} files successfully!")
+                            
+                            st.subheader(f"Preview Data ({len(preview_df)} transactions)")
+                            st.dataframe(preview_df.head(), use_container_width=True)
+                            
+                            file_name = f"PublicBank_Table_{report_month.replace(' ', '_')}.xlsx"
+                            
+                            st.download_button(
+                                label="📥 Download Formatted Excel",
+                                data=excel_data.getvalue(),
+                                file_name=file_name,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        else:
+                            st.error("No valid transactions found.")
+                            
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+            else:
+                st.warning("Please upload PDF files above.")
         # === MODE 2: STANDARD EXTRACTION ===
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
