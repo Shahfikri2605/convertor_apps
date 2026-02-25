@@ -49,7 +49,7 @@ def extract_data_from_pdf(pdf_bytes):
                             rows.append({
                                 "DATE": date_val,
                                 "ID TERMINAL": idterminal,
-                                "DESCRIPTION": "PUBLIC BANK CARD", 
+                                "DESCRIPTION": "PUBLIC BANK", 
                                 "AMOUNT": gross,
                                 "COMMISSION": comm,
                                 "BANK": net
