@@ -1,3 +1,4 @@
 libzbar0
 chromium
 chromium-driver
+pypdf
