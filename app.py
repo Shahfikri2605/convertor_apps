@@ -350,7 +350,7 @@ def main_app_interface(authenticator, name, permissions):
                             st.success("✅ Boost Processing Complete!")
                             
                             st.subheader("Preview Data")
-                            st.dataframe(preview_df.head(), use_container_width=True)
+                            st.dataframe(preview_df, use_container_width=True)
                             
                             file_name = f"Boost_Table_{report_month.replace(' ', '_')}.xlsx"
                             
