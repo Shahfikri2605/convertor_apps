@@ -394,7 +394,7 @@ def main_app_interface(authenticator, name, permissions):
                             st.success(f"✅ Combined {len(uploaded_files)} files successfully!")
                             
                             st.subheader(f"Preview Data ({len(preview_df)} transactions)")
-                            st.dataframe(preview_df.head(), use_container_width=True)
+                            st.dataframe(preview_df, use_container_width=True)
                             
                             file_name = f"PublicBank_Table_{report_month.replace(' ', '_')}.xlsx"
                             
