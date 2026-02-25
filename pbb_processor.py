@@ -41,12 +41,14 @@ def extract_data_from_pdf(pdf_bytes):
                         
                         try:
                             date_val = parse_custom_date(date_str)
+                            idterminal = int(clean_row[1])
                             gross = float(clean_row[4].replace(',', ''))
                             comm = float(clean_row[5].replace(',', ''))
                             net = float(clean_row[7].replace(',', ''))
                             
                             rows.append({
                                 "DATE": date_val,
+                                "ID TERMINAL": idterminal,
                                 "DESCRIPTION": "PUBLIC BANK CARD", 
                                 "AMOUNT": gross,
                                 "COMMISSION": comm,
