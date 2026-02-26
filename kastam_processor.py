@@ -18,7 +18,7 @@ def process_kastam_pdf(pdf_bytes, filename, api_key):
     
     # Configure API
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-3-flash-preview')
     
     temp_dir = tempfile.mkdtemp()
 
