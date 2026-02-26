@@ -49,7 +49,7 @@ def extract_data_from_pdf(pdf_bytes):
                             rows.append({
                                 "DATE": date_val,
                                 "ID TERMINAL": idterminal,
-                                "DESCRIPTION": "PUBLIC BANK", 
+                                "DESCRIPTION": "PUBLIC BANK CARD", 
                                 "AMOUNT": gross,
                                 "COMMISSION": comm,
                                 "BANK": net
@@ -87,6 +87,10 @@ def process_publicbank_files(uploaded_files, report_month, outlet_name, company_
     df_combined['temp_date'] = pd.to_datetime(df_combined['DATE'], format="%d/%m/%Y", errors='coerce')
     df_combined = df_combined.sort_values(by='temp_date').drop(columns=['temp_date'])
 
+    total_gross = df_combined['AMOUNT'].sum()
+    total_comm = df_combined['COMMISSION'].sum()
+    total_net = df_combined['BANK'].sum()
+
     header_rows = [
         [None, None, None, None, None, None], 
         [None, None, None, None, None, None], 
@@ -97,14 +101,16 @@ def process_publicbank_files(uploaded_files, report_month, outlet_name, company_
         [None, None, None, None, None, None], 
         [None, outlet_name, None, None, None, None], 
         [None, None, None, None, None, None], 
-        [None, 'DATE', 'DESCRIPTION ', 'AMOUNT', 'COMMISSION ', 'BANK'], 
+        [None, 'DATE','ID TERMINAL', 'DESCRIPTION ', 'AMOUNT', 'COMMISSION ', 'BANK'], 
         [None, None, None, 'RM', 'RM', 'RM'] 
     ]
     
     data_values = df_combined.values.tolist()
     data_rows = [[None] + row for row in data_values]
     
-    final_rows = header_rows + data_rows
+    total_row = [None, 'TOTAL', None, total_gross, total_comm, total_net]
+
+    final_rows = header_rows + data_rows + [total_row]
     df_final = pd.DataFrame(final_rows)
     
     output = BytesIO()
@@ -116,10 +122,12 @@ def process_publicbank_files(uploaded_files, report_month, outlet_name, company_
         
         border_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
         bold_fmt = workbook.add_format({'bold': True})
+
+        total_fmt = workbook.add_format({'bold': True, 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         
         start_row = 9
         end_row = len(final_rows) - 1
-        worksheet.conditional_format(start_row, 1, end_row, 5, {
+        worksheet.conditional_format(start_row, 1, end_row, 6, {
             'type': 'no_errors', 'format': border_fmt
         })
         
@@ -127,6 +135,12 @@ def process_publicbank_files(uploaded_files, report_month, outlet_name, company_
         worksheet.write(3, 1, bank_account, bold_fmt)
         worksheet.write(5, 1, report_month, bold_fmt)
         worksheet.write(7, 1, outlet_name, bold_fmt)
+
+        worksheet.write(end_row, 2, 'TOTAL', total_fmt)
+        worksheet.write(end_row, 3, '', total_fmt)
+        worksheet.write(end_row, 4, total_gross, total_fmt)
+        worksheet.write(end_row, 5, total_comm, total_fmt)
+        worksheet.write(end_row, 6, total_net, total_fmt)
         
         worksheet.set_column('A:A', 2)
         worksheet.set_column('B:B', 15)
