@@ -44,6 +44,7 @@ def process_boost_files(uploaded_files, report_month, outlet_name, company_name,
     # 3. MAP COLUMNS
     df_target = pd.DataFrame()
     df_target['DATE'] = df_combined['Date Time'].dt.strftime('%d/%m/%Y')
+    df_target['OUTLET ID'] = df_combined['Outlet ID']
     df_target['DESCRIPTION'] = 'BOOST'
     df_target['AMOUNT'] = df_combined['Transaction Amount']
     df_target['COMMISSION'] = df_combined['Boost MDR Amount']
@@ -64,7 +65,7 @@ def process_boost_files(uploaded_files, report_month, outlet_name, company_name,
         [None, None, None, None, None, None], # Row 7
         [None, outlet_name, None, None, None, None], # Row 8
         [None, None, None, None, None, None], # Row 9
-        [None, 'DATE', 'DESCRIPTION ', 'AMOUNT', 'COMMISSION ', 'BANK'], # Row 10
+        [None, 'DATE','OUTLET ID', 'DESCRIPTION ', 'AMOUNT', 'COMMISSION ', 'BANK'], # Row 10
         [None, None, None, 'RM', 'RM', 'RM'] # Row 11
     ]
     
@@ -99,7 +100,7 @@ def process_boost_files(uploaded_files, report_month, outlet_name, company_name,
         start_row = 9 
         end_row = len(final_rows) - 1
         start_col = 1 # Column B
-        end_col = 5   # Column F
+        end_col = 6   # Column F
         
         # Apply border to the data range
         # Note: xlsxwriter conditional_format is robust for ranges
