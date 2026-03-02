@@ -55,9 +55,9 @@ def process_global_excel(uploaded_files):
                         "Qty Sold": to_float(row[2]),
                         "Gross Amount": to_float(row[3]),
                         "Discount": to_float(row[4]),
-                        "Net Excl Tax": to_float(row[6]),
-                        "Tax Amount": to_float(row[8]),   
-                        "Net Incl Tax": to_float(row[9])  
+                        "Net Excl Tax": to_float(row[6]), # Column F is empty in raw, G is Net Excl
+                        "Tax Amount": to_float(row[8]),   # Column H is empty in raw, I is Tax
+                        "Net Incl Tax": to_float(row[9])  # Column J is Net Incl
                     })
 
         except Exception as e:
