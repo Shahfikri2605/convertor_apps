@@ -27,6 +27,9 @@ def extract_aeon_raw_data(pdf_bytes, filename):
 
                 if "CREDITNOTE" in line_nospaces or "CREDIT NOTE" in line_upper:
                     page_doc_type = "CREDIT NOTE"
+
+                elif "CONFIRMATIONFORDEDUCTION" in line_nospaces or "CONFIRMATION FOR DEDUCTION" in line_upper:
+                    page_doc_type ="DEDUCTION"
                 
                 if "STORECODE" in line_nospaces:
                     code_match = re.search(r"STORECODE[:\.]?(\d+)", line_nospaces)
@@ -40,8 +43,8 @@ def extract_aeon_raw_data(pdf_bytes, filename):
                         clean_name = re.split(r"ST\s*Rate|ST\s*Rate", raw_value, flags=re.IGNORECASE)[0]
                         current_store_name = clean_name.strip()
 
-                if any(x in line_nospaces for x in ["INVOICENO", "CREDITNOTENO"]):
-                    doc_match = re.search(r"(?:INVOICENO|CREDITNOTENO)[\.:]*(\S+)", line_nospaces)
+                if any(x in line_nospaces for x in ["INVOICENO", "CREDITNOTENO","DOCUMENTNO"]):
+                    doc_match = re.search(r"(?:INVOICENO|CREDITNOTENO|DOCUMENTNO)[\.:]*(\S+)", line_nospaces)
                     if doc_match:
                         raw_val = doc_match.group(1)
                         clean_num = re.split(r"DATE", raw_val)[0]
@@ -125,6 +128,9 @@ def generate_aeon_excel(df, file_summary):
     Returns: BytesIO object (the Excel file in memory).
     """
     if df.empty: return None
+    def is_deduction(row):
+        desc = row['DESCRIPTION']
+        return row['DOC_TYPE'] == 'DEDUCTION' and "TOTAL" not in desc and "TAX" not in desc
 
     # --- 1. DEFINE LOGIC ---
     def is_autopay(row):
@@ -166,6 +172,7 @@ def generate_aeon_excel(df, file_summary):
                 df.loc[group[parts_mask].index, 'Delivery charges'] = df.loc[group[parts_mask].index, 'AMOUNT']
 
     df['AUTOPAY'] = df.apply(lambda x: x['AMOUNT'] if is_autopay(x) else 0, axis=1)
+    df['Confirmation Deduction'] = df.apply(lambda x: x['AMOUNT'] if is_deduction(x) else 0, axis=1)
     df['23% Vege'] = df.apply(lambda x: x['AMOUNT'] if is_23_vege(x) else 0, axis=1)
     df['5213'] = df.apply(lambda x: x['AMOUNT'] if is_5213(x) else 0, axis=1)
     df['5201/5202'] = df.apply(lambda x: x['AMOUNT'] if is_5201_5202(x) else 0, axis=1)
@@ -179,12 +186,14 @@ def generate_aeon_excel(df, file_summary):
         '5213': 'sum',
         'Delivery charges': 'sum',
         '5201/5202': 'sum',
-        '20% Dry Food': 'sum'
+        '20% Dry Food': 'sum',
+        'Confirmation Deduction':'sum'
     }
 
-    cols_order = ['LOCATION', 'CODE', 'INVOICE_NO', 'AUTOPAY', '23% Vege', '5213', 'Delivery charges', '5201/5202', '20% Dry Food']
+    cols_order = ['LOCATION', 'CODE', 'INVOICE_NO', 'AUTOPAY', '23% Vege', '5213', 'Delivery charges', '5201/5202', '20% Dry Food','Confirmation Deduction']
 
-    df_inv = df[df['DOC_TYPE'] == 'INVOICE']
+    #df_inv = df[df['DOC_TYPE'] == 'INVOICE']
+    df_inv = df[df['DOC_TYPE'].isin(['INVOICE', 'DEDUCTION'])]
     final_inv = pd.DataFrame()
     if not df_inv.empty:
         # Group by Location/Code, Combine Invoices
@@ -212,7 +221,8 @@ def generate_aeon_excel(df, file_summary):
                     total_amt = (
                         file_df['AUTOPAY'].sum() + file_df['23% Vege'].sum() +
                         file_df['5213'].sum() + file_df['Delivery charges'].sum() +
-                        file_df['5201/5202'].sum() + file_df['20% Dry Food'].sum()
+                        file_df['5201/5202'].sum() + file_df['20% Dry Food'].sum()+
+                        file_df['Confirmation Deduction'].sum()
                     )
                 else:
                     total_amt = ''
