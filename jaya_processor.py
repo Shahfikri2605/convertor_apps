@@ -1,9 +1,9 @@
-import google.generativeai as genai
 import pandas as pd
 import json
 import tempfile
 import os
 import time
+import google.generativeai as genai
 
 def upload_to_gemini(file_path, mime_type="application/pdf"):
     """Uploads the file to Gemini and waits for processing."""
@@ -83,6 +83,13 @@ def process_jaya_pdf(pdf_bytes, filename, api_key):
         except json.JSONDecodeError:
             clean_json = raw_json.replace("```json", "").replace("```", "").strip()
             data = json.loads(clean_json)
+        
+        if isinstance(data, list):
+            if len(data) > 0 and isinstance(data[0], dict):
+                data = data[0]
+            else:
+                print("Error: AI returned an empty list or invalid format.")
+                return rows
 
         # 5. Process Data (Python Logic)
         location = data.get("Location", "")
