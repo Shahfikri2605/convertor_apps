@@ -11,7 +11,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import tfp_processor
 import maslee_processor
-import aeon_processor
+import aeon_processor  
 import urban_processor
 import jaya_processor
 import isetan_processor
@@ -19,6 +19,7 @@ import kastam_processor
 import boost
 import pbb_processor
 import data_cleaner
+import lazada_processor
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
 
@@ -63,7 +64,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner"], index=0)
 
         st.markdown("---")
 
@@ -452,6 +453,45 @@ def main_app_interface(authenticator, name, permissions):
                             st.error(f"An error occurred: {e}")
             else:
                 st.warning("Please upload Excel/CSV files above.")
+        elif mode == "Lazada Payout Combiner":
+            st.info("ℹ️ Mode: Lazada. Combines weekly CSVs, removes junk columns, and generates a Summary Report.")
+
+            # Custom Uploader for Lazada CSVs
+            lazada_files = st.file_uploader(
+                "Upload Lazada Transaction CSVs (Multiple Weeks)", 
+                accept_multiple_files=True, 
+                type=['csv','xlsx','xls'],
+                key="lazada_uploader"
+            )
+
+            if lazada_files:
+                if st.button("Combine Lazada Files", type="primary"):
+                    with st.spinner("Merging weekly statements..."):
+                        try:
+                            # Call the Processor
+                            excel_data, preview_df = lazada_processor.process_lazada_files(lazada_files)
+                            
+                            if excel_data is not None:
+                                st.success(f"✅ Successfully combined {len(lazada_files)} weekly statements!")
+                                
+                                # Show Preview of Raw Data
+                                st.subheader(f"Preview Combined Data ({len(preview_df)} rows)")
+                                st.dataframe(preview_df.head(10), use_container_width=True)
+                                
+                                # Download Button
+                                st.download_button(
+                                    label="📥 Download Lazada Monthly Report (Excel)",
+                                    data=excel_data.getvalue(),
+                                    file_name="Lazada_Combined_Report.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
+                            else:
+                                st.error("No valid data found in the uploaded files.")
+                                
+                        except Exception as e:
+                            st.error(f"An error occurred: {e}")
+            else:
+                st.warning("Please upload Lazada CSV files above.")
         # === MODE 2: STANDARD EXTRACTION ===
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
