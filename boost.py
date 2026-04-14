@@ -32,9 +32,9 @@ def process_boost_files(uploaded_files, report_month, outlet_name, company_name,
 
     # 2. CLEAN & SORT
     # Robust Date Conversion
-    df_combined['Date Time'] = pd.to_datetime(df_combined['Date Time'], errors='coerce')
-    df_combined = df_combined.dropna(subset=['Date Time'])
+    df_combined['Date Time'] = pd.to_datetime(df_combined['Date Time'], dayfirst=True, errors='coerce')
     
+    df_combined = df_combined.dropna(subset=['Date Time'])
     if df_combined.empty:
         return None, None
 
