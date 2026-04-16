@@ -3,110 +3,82 @@ import json
 import tempfile
 import os
 import time
-import shutil
-from io import BytesIO
-from pypdf import PdfReader, PdfWriter
 
-def process_kastam_pdf(pdf_bytes, filename, api_key):
+def upload_to_gemini(file_path, mime_type="application/pdf"):
+    file = genai.upload_file(file_path, mime_type=mime_type)
+    while file.state.name == "PROCESSING":
+        time.sleep(1)
+        file = genai.get_file(file.name)
+    if file.state.name != "ACTIVE":
+        raise Exception(f"Gemini File Error: {file.state.name}")
+    return file
+
+def process_jsp_invoice(pdf_bytes, filename, api_key):
     """
-    Extracts Kastam data using 'Chunking' (Processing 3 pages at a time).
-    - Saves API Quota (3x fewer requests than page-by-page).
-    - Maintains 100% Accuracy (unlike sending the whole file).
+    Extracts JSP Corporate Export Service Summary.
+    Target Columns: Decl. Date, Lorry No, Goods, Qty, Unit Chrg, Amount
     """
     rows = []
-    CHUNK_SIZE = 3  
-    
-    # Configure API
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-3-flash-preview')
+    # Gemini 1.5 Flash is excellent for tabular extraction from images/PDFs
+    model = genai.GenerativeModel("gemini-3-flash-preview") 
     
-    temp_dir = tempfile.mkdtemp()
+    temp_path = None
+    uploaded_file_ref = None
 
     try:
-        # Load PDF
-        reader = PdfReader(BytesIO(pdf_bytes))
-        total_pages = len(reader.pages)
-        print(f"--- Processing {total_pages} pages in batches of {CHUNK_SIZE} ---")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(pdf_bytes)
+            temp_path = tmp.name
 
-        for i in range(0, total_pages, CHUNK_SIZE):
-            writer = PdfWriter()
-            
-            end_page = min(i + CHUNK_SIZE, total_pages)
-            for page_num in range(i, end_page):
-                writer.add_page(reader.pages[page_num])
-            
-            chunk_filename = f"chunk_{i+1}_to_{end_page}.pdf"
-            chunk_path = os.path.join(temp_dir, chunk_filename)
-            with open(chunk_path, "wb") as f:
-                writer.write(f)
+        uploaded_file_ref = upload_to_gemini(temp_path)
 
-            uploaded_file = None
-            try:
-                uploaded_file = genai.upload_file(chunk_path, mime_type="application/pdf")
-                
-                while uploaded_file.state.name == "PROCESSING":
-                    time.sleep(0.5)
-                    uploaded_file = genai.get_file(uploaded_file.name)
+        # Prompt specifically designed for the JSP Summary table structure [cite: 97, 108, 118]
+        prompt = """
+        Extract the 'Export Service Summary' table from this document. 
+        Focus on the data between Page 2 and Page 7.
 
-                prompt = """
-                You are a Forensic Data Auditor. Extract data from these pages of the Kastam Invoice.
-                - Please extract for all pages in the PDF.
-                - accurately extract all line items from the tables.
-                - make sure all data is 100% accurate, especially the numbers (Qty, Unit Charge).
-            
-                
-                1. Look for the **INVOICE NO** in the header (it applies to all rows).
-                Return VALID JSON only:
-                {
-                  "Invoice_No": "string",
-                  "Line_Items": [
-                    {
-                      "Decl_Date": "string",
-                      "Lorry_No": "string",
-                      "Goods": "string",
-                      "Exp_Date": "string",
-                      "Qty": number,
-                      "Unit_Chrg": number
-                    }
-                  ]
-                }
-                """
+        COLUMNS TO EXTRACT:
+        1. "Decl_Date": The date in DD/MM/YYYY format.
+        2. "Lorry_No": The vehicle number (e.g., JPH9329 or JRF9586). If empty, leave as null.
+        3. "Goods": The item code (e.g., 3PEX-E, GC-33, GC-CHK63).
+        4. "Qty": The quantity as a number.
+        5. "Unit_Chrg": The unit price/charge.
+        6. "Amount": The total for that row.
 
-                response = model.generate_content(
-                    [uploaded_file, prompt],
-                    generation_config={'response_mime_type': 'application/json'}
-                )
+        REQUIREMENTS:
+        - Return ONLY a JSON object with a key "Items" containing a list of these objects.
+        - Process EVERY page that contains table rows.
+        - Ignore headers and the final "TOTAL" summary row.
+        - Fix common OCR errors: if a number looks like '10.C', convert it to 10.00.
+        """
 
-                data = json.loads(response.text)
-                
-                page_invoice_no = data.get("Invoice_No", "")
-                items = data.get("Line_Items", [])
+        response = model.generate_content(
+            [uploaded_file_ref, prompt],
+            generation_config={"response_mime_type": "application/json"}
+        )
 
-                if items:
-                    for item in items:
-                        if not item.get("Invoice_No"): 
-                            item["Invoice_No"] = page_invoice_no
-                        
-                        item['Source File'] = filename
-                        item['Page Batch'] = f"{i+1}-{end_page}" # Track which batch it came from
-                        rows.append(item)
-                    print(f"   > Batch {i+1}-{end_page}: Extracted {len(items)} rows.")
-                else:
-                    print(f"   > Batch {i+1}-{end_page}: No data.")
+        data = json.loads(response.text)
+        items = data.get("Items", [])
+        
+        for item in items:
+            rows.append({
+                "Source File": filename,
+                "Decl. Date": item.get("Decl_Date"),
+                "Lorry No": item.get("Lorry_No"),
+                "Goods": item.get("Goods"),
+                "Qty": item.get("Qty"),
+                "Unit Chrg": item.get("Unit_Chrg"),
+                "Amount": item.get("Amount")
+            })
 
-            except Exception as e:
-                print(f"Error on batch {i+1}-{end_page}: {e}")
-
-            finally:
-                if uploaded_file:
-                    try:
-                        genai.delete_file(uploaded_file.name)
-                    except: pass
-            
-            time.sleep(3)
-
+    except Exception as e:
+        print(f"JSP Processing Error: {e}")
+    
     finally:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+        if uploaded_file_ref:
+            uploaded_file_ref.delete()
 
     return rows
