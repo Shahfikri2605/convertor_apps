@@ -3,28 +3,26 @@ import json
 import tempfile
 import os
 import time
+import pandas as pd
 
 def upload_to_gemini(file_path, mime_type="application/pdf"):
     file = genai.upload_file(file_path, mime_type=mime_type)
     while file.state.name == "PROCESSING":
         time.sleep(1)
         file = genai.get_file(file.name)
-    if file.state.name != "ACTIVE":
-        raise Exception(f"Gemini File Error: {file.state.name}")
     return file
 
-def process_jsp_invoice(pdf_bytes, filename, api_key):
+def process_custom_invoice(pdf_bytes, filename, api_key):
     """
-    Extracts JSP Corporate Export Service Summary.
-    Target Columns: Decl. Date, Lorry No, Goods, Qty, Unit Chrg, Amount
+    Generalized extractor for JSP / Custom Service Invoices.
+    Handles scanned tables with high accuracy.
     """
-    rows = []
     genai.configure(api_key=api_key)
-    # Gemini 1.5 Flash is excellent for tabular extraction from images/PDFs
     model = genai.GenerativeModel("gemini-3-flash-preview") 
     
     temp_path = None
     uploaded_file_ref = None
+    rows = []
 
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -33,24 +31,23 @@ def process_jsp_invoice(pdf_bytes, filename, api_key):
 
         uploaded_file_ref = upload_to_gemini(temp_path)
 
-        # Prompt specifically designed for the JSP Summary table structure [cite: 97, 108, 118]
+        # Flexible prompt to handle Custom 1-7 variations
         prompt = """
-        Extract the 'Export Service Summary' table from this document. 
-        Focus on the data between Page 2 and Page 7.
+        Analyze this document and extract the main service/summary table.
+        Look for columns related to dates, vehicle/lorry numbers, item descriptions, and costs.
 
-        COLUMNS TO EXTRACT:
-        1. "Decl_Date": The date in DD/MM/YYYY format.
-        2. "Lorry_No": The vehicle number (e.g., JPH9329 or JRF9586). If empty, leave as null.
-        3. "Goods": The item code (e.g., 3PEX-E, GC-33, GC-CHK63).
-        4. "Qty": The quantity as a number.
-        5. "Unit_Chrg": The unit price/charge.
-        6. "Amount": The total for that row.
+        EXTRACT THESE FIELDS:
+        1. "Date": The declaration or service date.
+        2. "Reference": Lorry number or reference ID.
+        3. "Description": The item or service code (e.g., 3PEX, GC-33).
+        4. "Quantity": The count/qty.
+        5. "Unit_Price": The rate or unit charge.
+        6. "Amount": The total for that line.
 
-        REQUIREMENTS:
-        - Return ONLY a JSON object with a key "Items" containing a list of these objects.
-        - Process EVERY page that contains table rows.
-        - Ignore headers and the final "TOTAL" summary row.
-        - Fix common OCR errors: if a number looks like '10.C', convert it to 10.00.
+        RULES:
+        - Return ONLY a JSON object: {"Items": [...]}.
+        - Extract ALL rows from ALL pages of the summary.
+        - Convert currency strings (like '10.C' or 'RM 10') into clean numbers (10.00).
         """
 
         response = model.generate_content(
@@ -64,21 +61,19 @@ def process_jsp_invoice(pdf_bytes, filename, api_key):
         for item in items:
             rows.append({
                 "Source File": filename,
-                "Decl. Date": item.get("Decl_Date"),
-                "Lorry No": item.get("Lorry_No"),
-                "Goods": item.get("Goods"),
-                "Qty": item.get("Qty"),
-                "Unit Chrg": item.get("Unit_Chrg"),
+                "Date": item.get("Date"),
+                "Lorry/Ref": item.get("Reference"),
+                "Goods/Service": item.get("Description"),
+                "Qty": item.get("Quantity"),
+                "Unit Price": item.get("Unit_Price"),
                 "Amount": item.get("Amount")
             })
 
     except Exception as e:
-        print(f"JSP Processing Error: {e}")
+        print(f"Error processing {filename}: {e}")
     
     finally:
-        if temp_path and os.path.exists(temp_path):
-            os.unlink(temp_path)
-        if uploaded_file_ref:
-            uploaded_file_ref.delete()
+        if temp_path and os.path.exists(temp_path): os.unlink(temp_path)
+        if uploaded_file_ref: uploaded_file_ref.delete()
 
     return rows
