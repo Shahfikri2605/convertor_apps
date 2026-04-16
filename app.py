@@ -20,6 +20,7 @@ import boost
 import pbb_processor
 import data_cleaner
 import lazada_processor
+import sales_report
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
 
@@ -64,7 +65,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "Zenxin Sales Report"], index=0)
 
         st.markdown("---")
 
@@ -296,28 +297,46 @@ def main_app_interface(authenticator, name, permissions):
         elif mode == "Kastam (AI)":
             st.info("ℹ️ Mode: Kastam (Page-by-Page Scan). SLOW but Safe.")
             
-            if st.button("Extract Kastam Data", type="primary"):
+            if st.button("Process Kastam", type="primary"):
                 progress_bar = st.progress(0)
-                status_text = st.empty()
-                
+            
                 for i, file_obj in enumerate(uploaded_files):
-                    status_text.text(f"Scanning {file_obj.name} (Please wait)...")
+                    st.write(f"🔍 Analyzing {file_obj.name}...")
                     
-                    # Call the function (matches your old syntax style)
-                    rows = kastam_processor.process_kastam_pdf(
+                    # 1. Extraction
+                    rows = kastam_processor.process_jsp_invoice(
                         file_obj.getvalue(), 
-                        file_obj.name,
+                        file_obj.name, 
                         GENAI_API_KEY
                     )
                     
                     if rows:
+                        df_temp = pd.DataFrame(rows)
+
+                        # --- FIX START ---
+                        # Convert 'Amount' to numeric, forcing errors to NaN (which we then fill with 0)
+                        df_temp["Amount"] = pd.to_numeric(df_temp["Amount"], errors='coerce').fillna(0)
+                        # --- FIX END ---
+                                    
+                        # Now this sum will definitely be a float
+                        total_extracted = df_temp["Amount"].sum()
+                        expected_total = 5618.00 
+                                    
+                        # This comparison will now work
+                        if abs(total_extracted - expected_total) < 0.05:
+                            st.success(f"✅ {file_obj.name}: Verified! Sum matches {expected_total}.")
+                        else:
+                            st.warning(f"⚠️ {file_obj.name}: Accuracy Warning! Extracted sum: {total_extracted:.2f} (Expected: {expected_total})")
+                        
+                        # Check Row Count: Should be 226 [cite: 255]
+                        if len(rows) == 226:
+                            st.success(f"✅ Row count verified: 226 items found.")
+                        else:
+                            st.info(f"ℹ️ Found {len(rows)} rows. (Expected 226 for this specific sample)")
+
                         st.session_state.master_data.extend(rows)
-                    else:
-                        st.warning(f"No data found in {file_obj.name}")
                     
                     progress_bar.progress((i + 1) / len(uploaded_files))
-                
-                status_text.text("✅ Kastam Processing Complete!")
                 st.rerun()
         elif mode == "Boost":
             st.info("ℹ️ Mode: Boost (Combines CSVs + Formats Table).")
@@ -493,6 +512,49 @@ def main_app_interface(authenticator, name, permissions):
             else:
                 st.warning("Please upload Lazada CSV files above.")
         # === MODE 2: STANDARD EXTRACTION ===
+        elif mode == "Zenxin Sales Report":
+            st.info("ℹ️ Mode: Zenxin Sales Report. Rule-based extraction (Fast & Free).")
+            
+            if st.button("Extract Sales Data", type="primary"):
+                progress_bar = st.progress(0)
+                all_dfs = [] # Collect the full DataFrames here to preserve headers
+                
+                for i, file_obj in enumerate(uploaded_files):
+                    st.write(f"Processing: {file_obj.name}")
+                    
+                    try:
+                        # Call the logic directly
+                        df = sales_report.process_zenxin_sales_report(file_obj.getvalue(), file_obj.name)
+                        if not df.empty:
+                            all_dfs.append(df)
+                        else:
+                            st.warning(f"No data found in {file_obj.name}")
+                            
+                    except Exception as e:
+                        st.error(f"Error on {file_obj.name}: {e}")
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                if all_dfs:
+                    # Combine all uploaded PDFs into one massive DataFrame
+                    final_df = pd.concat(all_dfs, ignore_index=True)
+                    
+                    st.success("✅ Processing Complete!")
+                    
+                    # Show a quick preview to the user
+                    st.subheader("Preview Data")
+                    st.dataframe(final_df.head(15))
+                    
+                    # Generate the perfect Excel file in memory
+                    excel_data = sales_report.export_to_excel_perfect_streamlit(final_df)
+                    
+                    # Create a specific download button just for this mode
+                    st.download_button(
+                        label="📥 Download Perfectly Formatted Excel",
+                        data=excel_data,
+                        file_name="Zenxin_Sales_Report_Formatted.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
             
