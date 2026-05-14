@@ -305,7 +305,7 @@ def main_app_interface(authenticator, name, permissions):
                     st.write(f"🔍 Analyzing {file_obj.name}...")
                     
                     # 1. Extraction
-                    rows = kastam_processor.process_jsp_invoice(
+                    rows = kastam_processor.process_custom_invoice(
                         file_obj.getvalue(), 
                         file_obj.name, 
                         GENAI_API_KEY
