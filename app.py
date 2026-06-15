@@ -513,7 +513,7 @@ def main_app_interface(authenticator, name, permissions):
             else:
                 st.warning("Please upload Lazada CSV files above.")
         # === MODE 2: STANDARD EXTRACTION ===
-        elif mode == "Zenxin Sales Report":
+        elif mode == "JB Sales Report":
             st.info("ℹ️ Mode: Zenxin Sales Report. Rule-based extraction (Fast & Free).")
             
             if st.button("Extract Sales Data", type="primary"):
