@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pdfplumber
 import pandas as pd
@@ -22,6 +21,7 @@ import pbb_processor
 import data_cleaner
 import lazada_processor
 import sales_report
+import ntuc_sales
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
 
@@ -66,7 +66,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner"], index=0)
 
         st.markdown("---")
 
@@ -298,44 +298,31 @@ def main_app_interface(authenticator, name, permissions):
         elif mode == "Kastam (AI)":
             st.info("ℹ️ Mode: Kastam (Page-by-Page Scan). SLOW but Safe.")
             
-            if st.button("Process Kastam", type="primary"):
+            if st.button("Extract All Custom PDFs", type="primary"):
                 progress_bar = st.progress(0)
-            
+                
                 for i, file_obj in enumerate(uploaded_files):
-                    st.write(f"🔍 Analyzing {file_obj.name}...")
+                    st.write(f"Processing: {file_obj.name}")
                     
-                    # 1. Extraction
-                    rows = kastam_processor.process_custom_invoice(
+                    # Call the processor
+                    new_rows = kastam_processor.process_custom_invoice(
                         file_obj.getvalue(), 
                         file_obj.name, 
                         GENAI_API_KEY
                     )
                     
-                    if rows:
-                        df_temp = pd.DataFrame(rows)
-
-                        # --- FIX START ---
-                        # Convert 'Amount' to numeric, forcing errors to NaN (which we then fill with 0)
-                        df_temp["Amount"] = pd.to_numeric(df_temp["Amount"], errors='coerce').fillna(0)
-                        # --- FIX END ---
-                                    
-                        # Now this sum will definitely be a float
-                        total_extracted = df_temp["Amount"].sum()
-                        expected_total = 5618.00 
-                                    
-                        # This comparison will now work
-                        if abs(total_extracted - expected_total) < 0.05:
-                            st.success(f"✅ {file_obj.name}: Verified! Sum matches {expected_total}.")
-                        else:
-                            st.warning(f"⚠️ {file_obj.name}: Accuracy Warning! Extracted sum: {total_extracted:.2f} (Expected: {expected_total})")
+                    if new_rows:
+                        df_temp = pd.DataFrame(new_rows)
                         
-                        # Check Row Count: Should be 226 [cite: 255]
-                        if len(rows) == 226:
-                            st.success(f"✅ Row count verified: 226 items found.")
-                        else:
-                            st.info(f"ℹ️ Found {len(rows)} rows. (Expected 226 for this specific sample)")
-
-                        st.session_state.master_data.extend(rows)
+                        # --- CRITICAL: Numeric Conversion to avoid TypeErrors ---
+                        # This fixes the 'str' and 'float' subtraction error
+                        df_temp["Amount"] = pd.to_numeric(df_temp["Amount"], errors='coerce').fillna(0.0)
+                        df_temp["Qty"] = pd.to_numeric(df_temp["Qty"], errors='coerce').fillna(0.0)
+                        
+                        # Dynamic Validation Check
+                        # If you have an 'expected_total' variable, you can use it here
+                        st.success(f"✅ Extracted {len(new_rows)} rows from {file_obj.name}")
+                        st.session_state.master_data.extend(df_temp.to_dict('records'))
                     
                     progress_bar.progress((i + 1) / len(uploaded_files))
                 st.rerun()
@@ -556,6 +543,41 @@ def main_app_interface(authenticator, name, permissions):
                         file_name="Zenxin_Sales_Report_Formatted.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
+        
+        elif mode == "NTUC combiner":
+            st.info("ℹ️ Mode: NTUC Combiner. Merges matching Quantity and Sales wide matrix reports.")
+            
+            # Custom distinct selection uploaders for clarity
+            ntuc_qty_file = st.file_uploader("Upload NTUC Quantity CSV Report", type=['csv'], key="ntuc_q_upload")
+            ntuc_sales_file = st.file_uploader("Upload NTUC Sales CSV Report", type=['csv'], key="ntuc_s_upload")
+            
+            if ntuc_qty_file and ntuc_sales_file:
+                if st.button("Combine NTUC Reports", type="primary"):
+                    with st.spinner("Processing files..."):
+                        try:
+                            final_df = ntuc_sales.process_ntuc_files(
+                                ntuc_qty_file.getvalue(), 
+                                ntuc_sales_file.getvalue()
+                            )
+                            
+                            if not final_df.empty:
+                                st.success("✅ Combined reports successfully!")
+                                st.subheader("Preview Combined Data")
+                                st.dataframe(final_df.head(15), use_container_width=True)
+                                
+                                # Generate downloadable formatted binary attachment
+                                excel_data = ntuc_sales.export_to_excel_formatted(final_df)
+                                
+                                st.download_button(
+                                    label="📥 Download Combined NTUC Report (Excel)",
+                                    data=excel_data,
+                                    file_name="NTUC_Combined_Sales_Report.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
+                            else:
+                                st.error("No valid transactional rows matching values could be extracted.")
+                        except Exception as e:
+                            st.error(f"An processing error occurred: {e}")
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
             
