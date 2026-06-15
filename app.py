@@ -66,7 +66,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "Zenxin Sales Report"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report"], index=0)
 
         st.markdown("---")
 
