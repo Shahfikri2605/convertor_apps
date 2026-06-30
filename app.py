@@ -22,6 +22,7 @@ import data_cleaner
 import lazada_processor
 import sales_report
 import ntuc_sales
+import bgcp
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
 
@@ -66,7 +67,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP"], index=0)
 
         st.markdown("---")
 
@@ -513,6 +514,50 @@ def main_app_interface(authenticator, name, permissions):
                     try:
                         # Call the logic directly
                         df = sales_report.process_zenxin_sales_report(file_obj.getvalue(), file_obj.name)
+                        if not df.empty:
+                            all_dfs.append(df)
+                        else:
+                            st.warning(f"No data found in {file_obj.name}")
+                            
+                    except Exception as e:
+                        st.error(f"Error on {file_obj.name}: {e}")
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                if all_dfs:
+                    # Combine all uploaded PDFs into one massive DataFrame
+                    final_df = pd.concat(all_dfs, ignore_index=True)
+                    
+                    st.success("✅ Processing Complete!")
+                    
+                    # Show a quick preview to the user
+                    st.subheader("Preview Data")
+                    st.dataframe(final_df.head(15))
+                    
+                    # Generate the perfect Excel file in memory
+                    excel_data = sales_report.export_to_excel_perfect_streamlit(final_df)
+                    
+                    # Create a specific download button just for this mode
+                    st.download_button(
+                        label="📥 Download Perfectly Formatted Excel",
+                        data=excel_data,
+                        file_name="Zenxin_Sales_Report_Formatted.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+        elif mode == "BGCP":
+            st.info("ℹ️ Mode: Zenxin Sales Report. Rule-based extraction (Fast & Free).")
+            
+            if st.button("Extract Sales Data", type="primary"):
+                progress_bar = st.progress(0)
+                all_dfs = [] # Collect the full DataFrames here to preserve headers
+                
+                for i, file_obj in enumerate(uploaded_files):
+                    st.write(f"Processing: {file_obj.name}")
+                    
+                    try:
+                        # Call the logic directly
+                        df = bgcp.process_zenxin_sales_report(file_obj.getvalue(), file_obj.name)
                         if not df.empty:
                             all_dfs.append(df)
                         else:
