@@ -15,12 +15,13 @@ def process_zenxin_sales_report(pdf_path_or_bytes, source_file_name="Unknown"):
     from_date_global = "From Date [01/05/2026] To [31/05/2026]"
     invoice_no_global = "Unknown"
     invoice_date_global = "Unknown"
+    ship_to_global = "Unknown"  # <-- Added default value
 
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             raw_text = page.extract_text() or ""
             
-            # 1. Extract Header Metadata (Dates, Invoice No, Invoice Date)
+            # 1. Extract Header Metadata (Dates, Invoice No, Invoice Date, Ship To)
             date_match = re.search(r'From\s+Date\s+\[([\d/]+)\]\s+To\s+\[([\d/]+)\]', raw_text, re.IGNORECASE)
             if date_match:
                 from_date_global = f"From Date [{date_match.group(1)}] To [{date_match.group(2)}]"
@@ -47,7 +48,7 @@ def process_zenxin_sales_report(pdf_path_or_bytes, source_file_name="Unknown"):
                 if current_top is None:
                     current_top = w['top']
                     current_line.append(w)
-                elif abs(w['top'] - current_top) < 4:  # Spatial grouping alignment threshold
+                elif abs(w['top'] - current_top) < 4:
                     current_line.append(w)
                 else:
                     lines.append(current_line)
@@ -58,6 +59,51 @@ def process_zenxin_sales_report(pdf_path_or_bytes, source_file_name="Unknown"):
                 
             for line in lines:
                 line.sort(key=lambda w: w['x0'])
+
+            # NEW SPATIAL EXTRACTION FOR SHIP TO:
+            # Find where "Ship To:" lives visually, and take the text directly beneath it
+            ship_to_global = "Unknown"
+            ship_to_x0 = None
+            ship_to_top = None
+
+            # Step A: Pinpoint the exact visual bounding box anchoring "Ship To:"
+            for line in lines:
+                for w in line:
+                    if "SHIP" in w['text'].upper():
+                        # Peek at next token in same line to confirm it says "To:"
+                        idx = line.index(w)
+                        if idx + 1 < len(line) and "TO" in line[idx+1]['text'].upper():
+                            ship_to_x0 = w['x0']      # Left boundary edge
+                            ship_to_top = w['top']    # Vertical start ceiling
+                            break
+                if ship_to_x0 is not None:
+                    break
+
+            # Step B: Gather all multiline strings falling strictly below it inside its column tract
+            if ship_to_x0 is not None:
+                ship_words = []
+                # Scan lines falling below the header token, capped before table data boundaries
+                for line in lines:
+                    line_words = []
+                    for w in line:
+                        # Capture text staying within the spatial tracking channel width (+220 pixels)
+                        if (w['top'] > ship_to_top) and (ship_to_x0 - 5 <= w['x0'] <= ship_to_x0 + 220):
+                            text_upper = w['text'].upper().strip()
+                            # Stop immediately if we hit structural block labels or address starters
+                            if any(k in text_upper for k in ["CONTACT", "TEL:", "FAX:", "EMAIL:", "INVOICE"]):
+                                continue
+                            # Skip standalone 'No' or 'No.' markers to avoid catching address fragments
+                            if text_upper in ["NO", "NO."]:
+                                continue
+                            line_words.append(w['text'])
+                    
+                    if line_words:
+                        line_str = " ".join(line_words).strip()
+                        if line_str:
+                            # Clean out any accidental trailing 'No.' or 'No' just in case
+                            line_str = re.sub(r'\s+No\.?$', '', line_str, flags=re.IGNORECASE).strip()
+                            ship_to_global = line_str
+                            break # Found the clean outlet name label! Stop tracking lower lines
                 
             # 3. Parse data records line by line
             for line in lines:
@@ -145,6 +191,7 @@ def process_zenxin_sales_report(pdf_path_or_bytes, source_file_name="Unknown"):
                         "From Date": from_date_global,
                         "Invoice No.": invoice_no_global,
                         "Invoice Date": invoice_date_global,
+                        "Ship To": ship_to_global,  # <-- Added value
                         "Item Code": item_code,
                         "Barcode": barcode,
                         "Description": description,
@@ -159,16 +206,17 @@ def process_zenxin_sales_report(pdf_path_or_bytes, source_file_name="Unknown"):
                     continue
                     
     df = pd.DataFrame(all_products)
+    final_columns = ["Source File", "From Date", "Invoice No.", "Invoice Date", "Ship To", "Item Code", "Barcode", "Description", "U/M", "Qty Sold", "Unit Price", "Discount %", "Discount Amt", "Amount"]
+    
     if df.empty:
-        return pd.DataFrame(columns=["Source File", "From Date", "Invoice No.", "Invoice Date", "Item Code", "Barcode", "Description", "U/M", "Qty Sold", "Unit Price", "Discount %", "Discount Amt", "Amount"])
+        return pd.DataFrame(columns=final_columns)
         
     # Aggregate values to sum up duplicate item values split by system break lines cleanly
+    # Added "Ship To" to the groupby keys so it stays in the data frame structural layout
     df_grouped = df.groupby(
-        ["Source File", "From Date", "Invoice No.", "Invoice Date", "Item Code", "Barcode", "Description", "U/M"], as_index=False
+        ["Source File", "From Date", "Invoice No.", "Invoice Date", "Ship To", "Item Code", "Barcode", "Description", "U/M"], as_index=False
     )[["Qty Sold", "Unit Price", "Discount %", "Discount Amt", "Amount"]].sum()
     
-    # Re-enforce requested exact visual order layout mapping
-    final_columns = ["Source File", "From Date", "Invoice No.", "Invoice Date", "Item Code", "Barcode", "Description", "U/M", "Qty Sold", "Unit Price", "Discount %", "Discount Amt", "Amount"]
     return df_grouped[final_columns]
 
 
@@ -195,18 +243,19 @@ def export_to_excel_perfect_streamlit(df):
     
     # Set explicit structured width sizes matching column contents
     worksheet.set_column('A:A', 32, format_text)    # Source File
-    worksheet.set_column('B:B', 38, format_center)  # From Date [01/05/2026] To [31/05/2026]
+    worksheet.set_column('B:B', 38, format_center)  # From Date
     worksheet.set_column('C:C', 16, format_center)  # Invoice No.
     worksheet.set_column('D:D', 14, format_center)  # Invoice Date
-    worksheet.set_column('E:E', 15, format_center)  # Item Code
-    worksheet.set_column('F:F', 18, format_center)  # Barcode
-    worksheet.set_column('G:G', 45, format_text)    # Description
-    worksheet.set_column('H:H', 10, format_center)  # U/M
-    worksheet.set_column('I:I', 14, format_qty)     # Qty Sold
-    worksheet.set_column('J:J', 14, format_val)     # Unit Price
-    worksheet.set_column('K:K', 14, format_qty)     # Discount %
-    worksheet.set_column('L:L', 14, format_val)     # Discount Amt
-    worksheet.set_column('M:M', 15, format_val)     # Amount
+    worksheet.set_column('E:E', 24, format_text)    # Ship To <-- Assigned structural spacing
+    worksheet.set_column('F:F', 15, format_center)  # Item Code
+    worksheet.set_column('G:G', 18, format_center)  # Barcode
+    worksheet.set_column('H:H', 45, format_text)    # Description
+    worksheet.set_column('I:I', 10, format_center)  # U/M
+    worksheet.set_column('J:J', 14, format_qty)     # Qty Sold
+    worksheet.set_column('K:K', 14, format_val)     # Unit Price
+    worksheet.set_column('L:L', 14, format_qty)     # Discount %
+    worksheet.set_column('M:M', 14, format_val)     # Discount Amt
+    worksheet.set_column('N:N', 15, format_val)     # Amount
     
     worksheet.autofilter(0, 0, len(df), len(df.columns) - 1)
     worksheet.freeze_panes(1, 0) 
