@@ -29,7 +29,7 @@ def process_jaya_pdf(pdf_bytes, filename, api_key):
     
     # Configure API
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.5-flash-preview") 
+    model = genai.GenerativeModel("gemini-2.5-flash") 
     
     temp_path = None
     uploaded_file_ref = None
