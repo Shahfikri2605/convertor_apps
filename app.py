@@ -23,6 +23,7 @@ import lazada_processor
 import sales_report
 import ntuc_sales
 import bgcp
+import aeon_uuid_processor
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
 
@@ -67,7 +68,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Invoice(UUID)", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP"], index=0)
 
         st.markdown("---")
 
@@ -623,6 +624,53 @@ def main_app_interface(authenticator, name, permissions):
                                 st.error("No valid transactional rows matching values could be extracted.")
                         except Exception as e:
                             st.error(f"An processing error occurred: {e}")
+
+        elif mode == "Aeon Invoice(UUID)":
+            st.info("ℹ️ Mode : Aeon Invoice Extract UUID")
+            
+            if st.button("Process AEON Invoice Files", type="primary"):
+                all_dfs = []
+                file_summary = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                # 1. Extract Raw Data from all files
+                for i, file_obj in enumerate(uploaded_files):
+                    status_text.text(f"Scanning {file_obj.name}...")
+                    try:
+                        df = aeon_uuid_processor.extract_aeon_uuid_raw_data(file_obj.getvalue(), file_obj.name)
+                        if not df.empty:
+                            df['SOURCE_FILE'] = file_obj.name
+                            all_dfs.append(df)
+                            file_summary.append((file_obj.name, len(df)))
+                        else:
+                            file_summary.append((file_obj.name, 0))
+                    except Exception as e:
+                        file_summary.append((file_obj.name, f"Error: {e}"))
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+
+                # 2. Process & Generate Excel
+                if all_dfs:
+                    combined_df = pd.concat(all_dfs, ignore_index=True)
+                    excel_data, preview_df = aeon_uuid_processor.generate_aeon_excel(combined_df, file_summary)
+                    
+                    st.success("✅ AEON Processing Complete!")
+                    
+                    # Display Preview (Just the Invoice Sheet)
+                    if not preview_df.empty:
+                        st.subheader("Preview (INVOICE Sheet)")
+                        st.dataframe(preview_df, use_container_width=True)
+                    
+                    # Download Button
+                    st.download_button(
+                        label="📥 Download AEON Report (Multi-Sheet)",
+                        data=excel_data.getvalue(),
+                        file_name="AEON_Consolidated_Report.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.error("No valid AEON data found in uploaded files.")
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
             
