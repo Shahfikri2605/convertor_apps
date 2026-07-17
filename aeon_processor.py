@@ -18,6 +18,8 @@ def extract_aeon_raw_data(pdf_bytes, filename):
             current_store_name = None
             current_store_code = None
             current_doc_number = None
+            current_uuid = None
+            current_date = None
             page_doc_type = "INVOICE" 
             
             # --- 1. HEADER & DOC TYPE DETECTION ---
@@ -50,6 +52,18 @@ def extract_aeon_raw_data(pdf_bytes, filename):
                         clean_num = re.split(r"DATE", raw_val)[0]
                         current_doc_number = clean_num.strip()
 
+                # --- EXTRACT LHDN UUID ---
+                if "LHDNUUID" in line_nospaces:
+                    uuid_match = re.search(r"LHDNUUID[:\s]*(\w+)", line_nospaces)
+                    if uuid_match:
+                        current_uuid = uuid_match.group(1)
+
+                # --- EXTRACT INVOICE DATE ---
+                if "DATE" in line_nospaces or re.search(r"\b\d{2}/\d{2}/\d{4}\b", line):
+                    date_match = re.search(r"(\d{2}/\d{2}/\d{4})", line)
+                    if date_match and not current_date:
+                        current_date = date_match.group(1)
+
             if not current_store_name:
                 continue
 
@@ -69,6 +83,8 @@ def extract_aeon_raw_data(pdf_bytes, filename):
                             "LOCATION": current_store_name,
                             "CODE": current_store_code,
                             "INVOICE_NO": current_doc_number,
+                            "DATE": current_date,
+                            "LHDN_UUID": current_uuid,
                             "DESCRIPTION": "INVOICE_TOTAL_CANDIDATE",
                             "MARGIN": 0.0,
                             "AMOUNT": amount,
@@ -114,6 +130,8 @@ def extract_aeon_raw_data(pdf_bytes, filename):
                     "LOCATION": current_store_name,
                     "CODE": current_store_code,
                     "INVOICE_NO": current_doc_number,
+                    "DATE": current_date,
+                    "LHDN_UUID": current_uuid,
                     "DESCRIPTION": description,
                     "MARGIN": margin,
                     "AMOUNT": amount,
@@ -123,10 +141,6 @@ def extract_aeon_raw_data(pdf_bytes, filename):
     return pd.DataFrame(data)
 
 def generate_aeon_excel(df, file_summary):
-    """
-    Applies logic and generates the specific Multi-Sheet Excel file.
-    Returns: BytesIO object (the Excel file in memory).
-    """
     if df.empty: return None
     def is_deduction(row):
         desc = row['DESCRIPTION']
@@ -154,6 +168,10 @@ def generate_aeon_excel(df, file_summary):
     def is_20_dry(row): return row['MARGIN'] == 20.0
     def is_delivery_indicator(desc):
         return "DELIVERY" in desc or "DC CHARGE" in desc or "TRANSPORT" in desc
+    
+    def is_promo_adv(row):
+        desc = row['DESCRIPTION']
+        return "PROMOTIONAL" in desc or "ADVERTISING" in desc
 
     # --- 2. CALCULATE CHARGES ---
     df['Delivery charges'] = 0.0
@@ -177,26 +195,29 @@ def generate_aeon_excel(df, file_summary):
     df['5213'] = df.apply(lambda x: x['AMOUNT'] if is_5213(x) else 0, axis=1)
     df['5201/5202'] = df.apply(lambda x: x['AMOUNT'] if is_5201_5202(x) else 0, axis=1)
     df['20% Dry Food'] = df.apply(lambda x: x['AMOUNT'] if is_20_dry(x) else 0, axis=1)
+    df['Promo/Adv Services'] = df.apply(lambda x: x['AMOUNT'] if is_promo_adv(x) else 0, axis=1)
 
-    # --- 3. AGGREGATE (Combine Invoice Numbers) ---
+    # --- 3. AGGREGATE (Combine Invoice Numbers, Dates, and UUIDs) ---
     agg_rules = {
-        'INVOICE_NO': lambda x: ', '.join(sorted(set(str(i) for i in x if i))), # <--- YOUR COMBINE LOGIC
+        'INVOICE_NO': lambda x: ', '.join(sorted(set(str(i) for i in x if i and str(i) != 'None'))),
+        'DATE': lambda x: ', '.join(sorted(set(str(i) for i in x if i and str(i) != 'None'))),
+        'LHDN_UUID': lambda x: ', '.join(sorted(set(str(i) for i in x if i and str(i) != 'None'))),
         'AUTOPAY': 'sum',
         '23% Vege': 'sum',
         '5213': 'sum',
         'Delivery charges': 'sum',
         '5201/5202': 'sum',
         '20% Dry Food': 'sum',
-        'Confirmation Deduction':'sum'
+        'Confirmation Deduction':'sum',
+        'Promo/Adv Services': 'sum'
     }
 
-    cols_order = ['LOCATION', 'CODE', 'INVOICE_NO', 'AUTOPAY', '23% Vege', '5213', 'Delivery charges', '5201/5202', '20% Dry Food','Confirmation Deduction']
+    # Added 'DATE' and 'LHDN_UUID' columns right after 'INVOICE_NO'
+    cols_order = ['LOCATION', 'CODE', 'INVOICE_NO', 'DATE', 'LHDN_UUID', 'AUTOPAY', '23% Vege', '5213', 'Delivery charges', '5201/5202', '20% Dry Food','Confirmation Deduction','Promo/Adv Services']
 
-    #df_inv = df[df['DOC_TYPE'] == 'INVOICE']
     df_inv = df[df['DOC_TYPE'].isin(['INVOICE', 'DEDUCTION'])]
     final_inv = pd.DataFrame()
     if not df_inv.empty:
-        # Group by Location/Code, Combine Invoices
         final_inv = df_inv.groupby(['LOCATION', 'CODE']).agg(agg_rules).reset_index()[cols_order]
 
     df_cn = df[df['DOC_TYPE'] == 'CREDIT NOTE']
@@ -222,7 +243,7 @@ def generate_aeon_excel(df, file_summary):
                         file_df['AUTOPAY'].sum() + file_df['23% Vege'].sum() +
                         file_df['5213'].sum() + file_df['Delivery charges'].sum() +
                         file_df['5201/5202'].sum() + file_df['20% Dry Food'].sum()+
-                        file_df['Confirmation Deduction'].sum()
+                        file_df['Confirmation Deduction'].sum()+ file_df['Promo/Adv Services'].sum()
                     )
                 else:
                     total_amt = ''
@@ -230,4 +251,4 @@ def generate_aeon_excel(df, file_summary):
             
             pd.DataFrame(summary_rows, columns=["FILENAME", "EXTRACTED_ITEMS", "TOTAL_AMOUNT"]).to_excel(writer, sheet_name='SUMMARY', index=False)
             
-    return output, final_inv 
+    return output, final_inv
