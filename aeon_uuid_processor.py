@@ -173,6 +173,28 @@ def generate_aeon_excel(df, file_summary):
     def is_promo_adv(row):
         desc = row['DESCRIPTION']
         return "PROMOTIONAL" in desc or "ADVERTISING" in desc
+    
+    def check_unmatched(row):
+        # Ignore structural system variables
+        if row['DESCRIPTION'] in ["INVOICE_TOTAL_CANDIDATE"]:
+            return False
+            
+        # If it triggers any standard routing rules, it's considered matched
+        if (is_autopay(row) or is_5213(row) or is_5201_5202(row) or 
+            is_23_vege(row) or is_20_dry(row) or is_promo_adv(row) or 
+            is_delivery_indicator(row['DESCRIPTION']) or is_deduction(row)):
+            return False
+            
+        # Ignore pure structural calculations like system tax records that aren't discrepancies
+        if "TAX" in row['DESCRIPTION'] or "SST" in row['DESCRIPTION']:
+            return False
+            
+        return True
+    
+    unmatched_df = df[df.apply(check_unmatched, axis=1)].copy()
+    if not unmatched_df.empty:
+        # Keep clean columns for the dashboard alert sheet
+        unmatched_df = unmatched_df[['LOCATION', 'CODE', 'INVOICE_NO', 'DATE', 'DESCRIPTION', 'MARGIN', 'AMOUNT', 'SOURCE_FILE']]
 
     # --- 2. CALCULATE CHARGES ---
     df['Delivery charges'] = 0.0
@@ -229,6 +251,8 @@ def generate_aeon_excel(df, file_summary):
     final_cn = pd.DataFrame()
     if not df_cn.empty:
         final_cn = df_cn.groupby(groupby_keys, dropna=False).agg(agg_rules).reset_index()[cols_order]
+    
+    
 
     # --- 4. WRITE TO MEMORY (BytesIO) ---
     output = BytesIO()
@@ -237,6 +261,8 @@ def generate_aeon_excel(df, file_summary):
             final_inv.to_excel(writer, sheet_name='INVOICE', index=False)
         if not final_cn.empty:
             final_cn.to_excel(writer, sheet_name='CREDIT NOTE', index=False)
+        if not unmatched_df.empty:
+            unmatched_df.to_excel(writer, sheet_name='UNMATCHED_ITEMS', index=False)
         
         # Summary Sheet
         if file_summary:
