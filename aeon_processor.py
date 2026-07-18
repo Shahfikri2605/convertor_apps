@@ -142,6 +142,7 @@ def extract_aeon_raw_data(pdf_bytes, filename):
 
 def generate_aeon_excel(df, file_summary):
     if df.empty: return None
+    
     def is_deduction(row):
         desc = row['DESCRIPTION']
         return row['DOC_TYPE'] == 'DEDUCTION' and "TOTAL" not in desc and "TAX" not in desc
@@ -166,12 +167,40 @@ def generate_aeon_excel(df, file_summary):
 
     def is_23_vege(row): return row['MARGIN'] == 23.0
     def is_20_dry(row): return row['MARGIN'] == 20.0
+    
     def is_delivery_indicator(desc):
         return "DELIVERY" in desc or "DC CHARGE" in desc or "TRANSPORT" in desc
+    
+    def is_delivery_invoice_row(row):
+        return is_delivery_indicator(row['DESCRIPTION']) or row['DESCRIPTION'] == "INVOICE_TOTAL_CANDIDATE"
     
     def is_promo_adv(row):
         desc = row['DESCRIPTION']
         return "PROMOTIONAL" in desc or "ADVERTISING" in desc
+
+    # --- 1.5 CHECK FOR UNMATCHED DESCRIPTIONS ---
+    def check_unmatched(row):
+        # Ignore structural system variables
+        if row['DESCRIPTION'] in ["INVOICE_TOTAL_CANDIDATE"]:
+            return False
+            
+        # If it triggers any standard routing rules, it's considered matched
+        if (is_autopay(row) or is_5213(row) or is_5201_5202(row) or 
+            is_23_vege(row) or is_20_dry(row) or is_promo_adv(row) or 
+            is_delivery_indicator(row['DESCRIPTION']) or is_deduction(row)):
+            return False
+            
+        # Ignore pure structural calculations like system tax records that aren't discrepancies
+        if "TAX" in row['DESCRIPTION'] or "SST" in row['DESCRIPTION']:
+            return False
+            
+        return True
+
+    # Filter out all lines that don't match standard coding logic
+    unmatched_df = df[df.apply(check_unmatched, axis=1)].copy()
+    if not unmatched_df.empty:
+        # Keep clean columns for the dashboard alert sheet
+        unmatched_df = unmatched_df[['LOCATION', 'CODE', 'INVOICE_NO', 'DATE', 'DESCRIPTION', 'MARGIN', 'AMOUNT', 'SOURCE_FILE']]
 
     # --- 2. CALCULATE CHARGES ---
     df['Delivery charges'] = 0.0
@@ -212,7 +241,6 @@ def generate_aeon_excel(df, file_summary):
         'Promo/Adv Services': 'sum'
     }
 
-    # Added 'DATE' and 'LHDN_UUID' columns right after 'INVOICE_NO'
     cols_order = ['LOCATION', 'CODE', 'INVOICE_NO', 'DATE', 'LHDN_UUID', 'AUTOPAY', '23% Vege', '5213', 'Delivery charges', '5201/5202', '20% Dry Food','Confirmation Deduction','Promo/Adv Services']
 
     df_inv = df[df['DOC_TYPE'].isin(['INVOICE', 'DEDUCTION'])]
@@ -232,6 +260,10 @@ def generate_aeon_excel(df, file_summary):
             final_inv.to_excel(writer, sheet_name='INVOICE', index=False)
         if not final_cn.empty:
             final_cn.to_excel(writer, sheet_name='CREDIT NOTE', index=False)
+        
+        # --- NEW STEP: Save exceptions tab ---
+        if not unmatched_df.empty:
+            unmatched_df.to_excel(writer, sheet_name='UNMATCHED_ITEMS', index=False)
         
         # Summary Sheet
         if file_summary:
