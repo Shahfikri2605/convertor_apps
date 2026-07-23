@@ -45,8 +45,16 @@ def extract_aeon_raw_data(pdf_bytes, filename):
                         clean_name = re.split(r"ST\s*Rate|ST\s*Rate", raw_value, flags=re.IGNORECASE)[0]
                         current_store_name = clean_name.strip()
 
-                if any(x in line_nospaces for x in ["INVOICENO", "CREDITNOTENO","DOCUMENTNO"]):
-                    doc_match = re.search(r"(?:INVOICENO|CREDITNOTENO|DOCUMENTNO)[\.:]*(\S+)", line_nospaces)
+                if any(x in line_nospaces for x in ["INVOICENO", "CREDITNOTENO"]):
+                                    doc_match = re.search(r"(?:INVOICENO|CREDITNOTENO)[\.:]*(\S+)", line_nospaces)
+                                    if doc_match:
+                                        raw_val = doc_match.group(1)
+                                        clean_num = re.split(r"DATE", raw_val)[0]
+                                        current_doc_number = clean_num.strip()
+                
+                                # Fallback to DOCUMENT NO. only if current_doc_number hasn't been set yet
+                elif "DOCUMENTNO" in line_nospaces and not current_doc_number:
+                    doc_match = re.search(r"DOCUMENTNO[\.:]*(\S+)", line_nospaces)
                     if doc_match:
                         raw_val = doc_match.group(1)
                         clean_num = re.split(r"DATE", raw_val)[0]
