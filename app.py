@@ -25,6 +25,7 @@ import ntuc_sales
 import bgcp
 import aeon_uuid_processor
 import cs_giant_processor
+import ntuc_batch_po_processor
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
 
@@ -69,7 +70,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Invoice(UUID)", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP","Cold Storage / Giant (SG)"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Invoice(UUID)", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP","Cold Storage / Giant (SG)","NTUC Batch PO Combiner"], index=0)
 
         st.markdown("---")
 
@@ -747,6 +748,38 @@ def main_app_interface(authenticator, name, permissions):
                         file_name="CS_Giant_Consolidated.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
+        elif mode == "NTUC Batch PO Combiner":
+            st.info("ℹ️ Mode: NTUC Batch PO Combiner (Extracts every sheet/tab across uploaded files).")
+
+            ntuc_batch_files = st.file_uploader(
+                "Upload NTUC Batch PO Excel Files", 
+                accept_multiple_files=True, 
+                type=['xlsx', 'xls'],
+                key="ntuc_batch_po_uploader"
+            )
+
+            if ntuc_batch_files:
+                if st.button("Combine All Sheets & Files", type="primary"):
+                    with st.spinner("Processing all sheets across workbooks..."):
+                        try:
+                            # 1. Clear previous session data to prevent duplicates
+                            st.session_state.master_data = []
+
+                            # 2. Extract every tab
+                            combined_df = ntuc_batch_po_processor.combine_all_ntuc_batch_files(ntuc_batch_files)
+                            
+                            if not combined_df.empty:
+                                st.session_state.master_data = combined_df.to_dict('records')
+                                st.success(
+                                    f"✅ Extracted {combined_df['PO No'].nunique()} unique POs "
+                                    f"across {combined_df['Sheet / Tab'].nunique()} tabs "
+                                    f"({len(combined_df)} total rows)!"
+                                )
+                                st.rerun()
+                            else:
+                                st.error("No line items found.")
+                        except Exception as e:
+                            st.error(f"Error processing files: {e}")
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
             
