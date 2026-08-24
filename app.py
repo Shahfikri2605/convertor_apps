@@ -24,6 +24,7 @@ import sales_report
 import ntuc_sales
 import bgcp
 import aeon_uuid_processor
+import cs_giant_processor
 
 GENAI_API_KEY = st.secrets["Gen_API"]["API_KEY"]
 
@@ -68,7 +69,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Invoice(UUID)", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Invoice(UUID)", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP","Cold Storage / Giant (SG)"], index=0)
 
         st.markdown("---")
 
@@ -671,6 +672,81 @@ def main_app_interface(authenticator, name, permissions):
                     )
                 else:
                     st.error("No valid AEON data found in uploaded files.")
+        elif mode == "Cold Storage / Giant (SG)":
+            st.info("ℹ️ Mode: Cold Storage / Giant Consignment Invoices (Full Header & Line Item Extraction).")
+            
+            if st.button("Extract Cold Storage / Giant Data", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, file_obj in enumerate(uploaded_files):
+                    status_text.text(f"Processing ({i+1}/{len(uploaded_files)}): {file_obj.name}...")
+                    try:
+                        rows = cs_giant_processor.process_cs_giant_pdf(
+                            file_obj.getvalue(), 
+                            file_obj.name
+                        )
+                        if rows:
+                            st.session_state.master_data.extend(rows)
+                        else:
+                            st.warning(f"No line items found in {file_obj.name}")
+                    except Exception as e:
+                        st.error(f"Error reading {file_obj.name}: {e}")
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                status_text.text("✅ Processing complete!")
+                st.rerun()
+
+            st.divider()
+            # --- DISPLAY & DYNAMIC COLUMN SELECTION LOGIC ---
+            if len(st.session_state.master_data) > 0:
+                st.subheader(f"📊 Extracted Data ({len(st.session_state.master_data)} Rows)")
+                df = pd.DataFrame(st.session_state.master_data)
+                all_cols = list(df.columns)
+                
+                # Preset Column Groups
+                col_view = st.radio(
+                    "Quick View Presets:",
+                    ["Default (Items + Invoice + Logistics)", "All Fields", "Custom Selection"],
+                    horizontal=True
+                )
+
+                preset_default = [
+                    "Sold To", "Delivered To", "Invoice No", "Invoice Date", 
+                    "DO No", "Delivery Date", "Order No", "Customer No", 
+                    "Item Code", "Cust Item Code", "Description", "Qty", 
+                    "Qty Price", "Amount", "Source File"
+                ]
+
+                if col_view == "Default (Items + Invoice + Logistics)":
+                    selected_cols = [c for c in preset_default if c in all_cols]
+                elif col_view == "All Fields":
+                    selected_cols = all_cols
+                else:
+                    selected_cols = st.multiselect(
+                        "Pick columns to include & reorder:",
+                        options=all_cols,
+                        default=[c for c in preset_default if c in all_cols]
+                    )
+
+                if not selected_cols:
+                    st.warning("⚠️ Please select at least one column to display and export.")
+                else:
+                    filtered_df = df[selected_cols]
+                    st.dataframe(filtered_df, use_container_width=True)
+
+                    # Export filtered dataframe
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        filtered_df.to_excel(writer, index=False)
+                    
+                    st.download_button(
+                        label=f"📥 Download Excel ({len(selected_cols)} columns, {len(filtered_df)} rows)",
+                        data=output.getvalue(),
+                        file_name="CS_Giant_Consolidated.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
             
