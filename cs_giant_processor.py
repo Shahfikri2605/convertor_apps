@@ -1,134 +1,154 @@
 import io
 import re
-import pypdf
+import pdfplumber
 import pandas as pd
 
-def process_cs_giant_pdf(file_bytes, filename=""):
+# Header metadata extraction patterns
+HEADER_PATTERNS = {
+    "Invoice No": re.compile(r"INVOICE\s*NO\s*:\s*([A-Za-z0-9\-]+)", re.IGNORECASE),
+    "Invoice Date": re.compile(r"INVOICE\s*DATE\s*:\s*([0-9]{1,2}-[A-Za-z]{3}-[0-9]{4})", re.IGNORECASE),
+    "DO No": re.compile(r"DO\s*NO\s*:\s*([A-Za-z0-9\-]+)", re.IGNORECASE),
+    "Delivery Date": re.compile(r"DELIVERY\s*DATE\s*:\s*([0-9]{1,2}-[A-Za-z]{3}-[0-9]{4})", re.IGNORECASE),
+    "Order No": re.compile(r"ORDER\s*NO\s*:\s*([A-Za-z0-9\-]+)", re.IGNORECASE),
+    "Customer No": re.compile(r"CUSTOMER\s*NO\s*:\s*([A-Za-z0-9\-]+)", re.IGNORECASE),
+    "Currency": re.compile(r"CURRENCY\s*:\s*([A-Za-z]+)", re.IGNORECASE),
+}
+
+# Matches the trailing numeric block: [Size / Unit] [Order Pack] [Qty] [Qty Price] [Amount] [BCRS]
+# Supports Size as digits (00000) or text (PK, BO, EA, KGM, etc.)
+TRAILING_NUMERIC_PATTERN = re.compile(
+    r"\s+([A-Za-z0-9]{2,6})\s+(\d+)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)$"
+)
+
+# Matches leading [NO] [Optional Item Code] [Cust Item Code]
+LEADING_PATTERN = re.compile(
+    r"^(?:(\d+)\s+)?(?:(\d{8})\s+)?(\d{7})\s+(.*)$"
+)
+
+
+def clean_numeric(val_str):
+    """Clean string numbers into standard float values."""
+    if not val_str:
+        return 0.0
+    val_clean = str(val_str).replace(",", "").strip()
+    try:
+        return float(val_clean)
+    except ValueError:
+        return 0.0
+
+
+def extract_headers_from_text(text):
+    """Extract invoice-level metadata from the page header."""
+    headers = {
+        "Sold To": "COLD STORAGE SINGAPORE (1983) PTE LTD",
+        "Delivered To": "Cold Storage Singapore (1983) Pte Ltd",
+        "Invoice No": "",
+        "Invoice Date": "",
+        "DO No": "",
+        "Delivery Date": "",
+        "Order No": "",
+        "Customer No": "",
+        "Currency": "SGD"
+    }
+
+    sold_to_match = re.search(r"SOLD\s*TO\s*:\s*(.*?)(?=DELIVERED\s*TO\s*:|INVOICE\s*NO|DO\s*NO|$)", text, re.DOTALL | re.IGNORECASE)
+    if sold_to_match:
+        sold_text = " ".join([l.strip() for l in sold_to_match.group(1).strip().splitlines() if l.strip()])
+        if sold_text:
+            headers["Sold To"] = sold_text
+
+    deliv_to_match = re.search(r"DELIVERED\s*TO\s*:\s*(.*?)(?=INVOICE\s*NO|DO\s*NO|TAX\s*INVOICE|$)", text, re.DOTALL | re.IGNORECASE)
+    if deliv_to_match:
+        deliv_text = " ".join([l.strip() for l in deliv_to_match.group(1).strip().splitlines() if l.strip()])
+        if deliv_text:
+            headers["Delivered To"] = deliv_text
+
+    for key, pattern in HEADER_PATTERNS.items():
+        m = pattern.search(text)
+        if m:
+            headers[key] = m.group(1).strip()
+
+    return headers
+
+
+def process_cs_giant_pdf(pdf_bytes, file_name=""):
     """
-    Universal extractor for all Zenxin Cold Storage & Giant Singapore Invoices.
-    Supports all historical layouts:
-      - With/Without 8-digit Item Code
-      - With/Without BCRS Deposit column
-      - All months (2025, 2026, Nov, Dec, Jan, Feb, Mar, Apr, Jul, etc.)
+    Extracts all line items across all pages of a Cold Storage / Giant Consignment invoice PDF.
+    Handles invoices with/without Item Code and with varying Size units.
     """
-    all_rows = []
+    all_extracted_rows = []
+    
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        global_headers = {}
 
-    seller_name = "Zenxin Agri-Organic Food Pte Ltd"
-    seller_address = "Blk14 Wholesale Centre #01-25, SINGAPORE, 110014"
-    biz_reg_no = "200616582M"
-    gst_reg_no = "200616582M"
-    sold_to = "COLD STORAGE SINGAPORE (1983) PTE LTD"
-    delivered_to = "Cold Storage Singapore (1983) Pte Ltd"
-    invoice_no = ""
-    invoice_date = ""
-    do_no = ""
-    delivery_date = ""
-    order_no = ""
-    order_date = ""
-    payment_due = ""
-    customer_no = "CS"
-    currency = "SGD"
+        for page in pdf.pages:
+            text = page.extract_text()
+            if not text:
+                continue
 
-    # Read PDF using pypdf
-    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-    full_text_list = []
+            page_headers = extract_headers_from_text(text)
+            if not global_headers.get("Invoice No"):
+                global_headers = page_headers
 
-    for i, page in enumerate(reader.pages):
-        page_txt = page.extract_text() or ""
-        full_text_list.append(page_txt)
+            lines = text.split("\n")
 
-        # Parse header metadata from Page 1
-        if i == 0:
-            m_inv = re.search(r"SO\d{2}-\d{7}", page_txt)
-            if m_inv:
-                invoice_no = m_inv.group(0).strip()
+            for raw_line in lines:
+                line = raw_line.strip()
 
-            m_date = re.search(r"(\d{1,2}-[A-Za-z]{3}-20\d{2})", page_txt)
-            if m_date:
-                invoice_date = m_date.group(1).strip()
+                # Skip header/summary noise lines
+                if not line or any(k in line.upper() for k in [
+                    "TAX INVOICE", "CUST ITEM", "QTY PRICE", "BCRS DEPOSIT",
+                    "PAGE ", "REMARKS :", "GROSS TOTAL", "AMOUNT DUE", "ADD GST @"
+                ]):
+                    continue
 
-            m_do = re.search(r"DO\s*NO\s*:\s*([A-Z0-9\-]+)", page_txt, re.I)
-            if m_do:
-                do_no = m_do.group(1).strip()
-            elif invoice_no:
-                do_no = invoice_no
+                # Remove layout artifact pipes and collapse whitespace
+                line_normalized = re.sub(r"\|", " ", line)
+                line_normalized = re.sub(r"\s+", " ", line_normalized).strip()
 
-            m_order = re.search(r"(?:ORDER\s*NO\s*:\s*|ORDER\s*:\s*|NO\s*:\s*)([A-Z0-9]{8,12})", page_txt, re.I)
-            if m_order:
-                order_no = m_order.group(1).strip()
-            else:
-                m_ord_fallback = re.search(r"(CON\d+|05\d+)", page_txt)
-                if m_ord_fallback:
-                    order_no = m_ord_fallback.group(1).strip()
+                # Step 1: Check if the end of line matches the 6 trailing numeric columns
+                trailing_match = TRAILING_NUMERIC_PATTERN.search(line_normalized)
 
-            m_ord_date = re.search(r"ORDER\s*DATE\s*:\s*(\d{1,2}-[A-Za-z]{3}-20\d{2})", page_txt, re.I)
-            if m_ord_date:
-                order_date = m_ord_date.group(1).strip()
-            elif invoice_date:
-                order_date = invoice_date
+                if trailing_match:
+                    size, pack, qty, price, amount, bcrs = trailing_match.groups()
+                    left_part = line_normalized[:trailing_match.start()].strip()
 
-            delivery_date = invoice_date
+                    # Step 2: Parse the leading identifiers (NO, Item Code, Cust Item Code, Description)
+                    lead_match = LEADING_PATTERN.match(left_part)
 
-            if "SGD" in page_txt:
-                currency = "SGD"
+                    if lead_match:
+                        row_no, item_code, cust_code, desc = lead_match.groups()
 
-    full_pdf_text = "\n".join(full_text_list)
+                        clean_desc = desc.lstrip("*").strip()
 
-    # Universal Line Item Pattern matching all layouts and column variants
-    row_pattern = re.compile(
-        r"(?:(?P<item_code>\d{8})\s*)?"               # Optional 8-digit Item Code
-        r"(?P<cust_code>\d{7})\s+"                    # 7-digit Cust Item Code
-        r"(?P<line_no>\d+)\s+"                        # Line No
-        r"(?P<pack>\d+)\s+"                           # Order Pack
-        r"(?P<desc>.*?)\s+"                           # Description
-        r"(?P<amt>[\d,]+\.\d{2})\s+"                  # Total Line Amount
-        r"(?P<price>[\d,]+\.\d{4,9})\s*"              # Unit Price (4-9 decimals)
-        r"(?P<size>[A-Za-z0-9/]{2,5})?\s+"            # Optional UOM/Size (PK, EA, BO, KGM, 00000)
-        r"(?P<qty>\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*"  # Quantity
-        r"(?P<bcrs>0\.00)?"                           # Optional BCRS (present in newer PDFs)
-    )
+                        row_data = {
+                            "Sold To": global_headers.get("Sold To", page_headers.get("Sold To", "")),
+                            "Delivered To": global_headers.get("Delivered To", page_headers.get("Delivered To", "")),
+                            "Invoice No": global_headers.get("Invoice No", page_headers.get("Invoice No", "")),
+                            "Invoice Date": global_headers.get("Invoice Date", page_headers.get("Invoice Date", "")),
+                            "DO No": global_headers.get("DO No", page_headers.get("DO No", "")),
+                            "Delivery Date": global_headers.get("Delivery Date", page_headers.get("Delivery Date", "")),
+                            "Order No": global_headers.get("Order No", page_headers.get("Order No", "")),
+                            "Customer No": global_headers.get("Customer No", page_headers.get("Customer No", "")),
+                            "Item Code": item_code if item_code else "",
+                            "Cust Item Code": cust_code,
+                            "Description": clean_desc,
+                            "Size": size,
+                            "Order Pack": pack,
+                            "Qty": clean_numeric(qty),
+                            "Qty Price": clean_numeric(price),
+                            "Amount": clean_numeric(amount),
+                            "BCRS Deposit": clean_numeric(bcrs),
+                            "Source File": file_name
+                        }
+                        all_extracted_rows.append(row_data)
 
-    matches = list(row_pattern.finditer(full_pdf_text))
+                else:
+                    # Handle multi-line description wrap
+                    if not re.search(r"^\d{7}", line_normalized) and not any(k in line_normalized for k in ["SOLD TO", "DELIVERED TO", "INVOICE"]):
+                        if all_extracted_rows:
+                            all_extracted_rows[-1]["Description"] = (
+                                all_extracted_rows[-1]["Description"] + " " + line_normalized.lstrip("*").strip()
+                            ).strip()
 
-    for m in matches:
-        item_code = m.group("item_code") or ""
-        cust_code = m.group("cust_code")
-        line_no = int(m.group("line_no"))
-        pack = int(m.group("pack"))
-        desc = m.group("desc").strip()
-        amt = float(m.group("amt").replace(",", ""))
-        price = float(m.group("price").replace(",", ""))
-        size = m.group("size") or ""
-        qty = float(m.group("qty").replace(",", ""))
-        bcrs = float(m.group("bcrs").replace(",", "")) if m.group("bcrs") else 0.0
-
-        all_rows.append({
-            "Sold To": sold_to,
-            "Delivered To": delivered_to,
-            "Invoice No": invoice_no,
-            "Invoice Date": invoice_date,
-            "DO No": do_no,
-            "Delivery Date": delivery_date,
-            "Order No": order_no,
-            "Order Date": order_date,
-            "Payment Due": payment_due,
-            "Customer No": customer_no,
-            "Currency": currency,
-            "Seller Name": seller_name,
-            "Seller Address": seller_address,
-            "Biz Reg No": biz_reg_no,
-            "GST Reg No": gst_reg_no,
-            "Line No": line_no,
-            "Item Code": item_code,
-            "Cust Item Code": cust_code,
-            "Description": desc,
-            "Size": size,
-            "Order Pack": pack,
-            "Qty": qty,
-            "Qty Price": price,
-            "Amount": amt,
-            "BCRS Deposit": bcrs,
-            "Source File": filename
-        })
-
-    return all_rows
+    return all_extracted_rows
