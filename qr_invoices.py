@@ -38,10 +38,41 @@ def get_driver():
     return webdriver.Chrome(service=service, options=chrome_options)
 
 
+def extract_qr_from_scan(image_bgr):
+    """Tries multiple image-processing techniques to detect faint/scanned QR codes."""
+    # 1. Direct pass
+    decoded = decode(image_bgr)
+    if decoded:
+        return decoded[0].data.decode("utf-8")
+
+    # 2. Grayscale + CLAHE Contrast Boost
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    decoded = decode(enhanced)
+    if decoded:
+        return decoded[0].data.decode("utf-8")
+
+    # 3. Adaptive Thresholding (removes scan shadows/paper background noise)
+    thresh = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 10
+    )
+    decoded = decode(thresh)
+    if decoded:
+        return decoded[0].data.decode("utf-8")
+
+    # 4. Otsu Binarization
+    _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    decoded = decode(otsu)
+    if decoded:
+        return decoded[0].data.decode("utf-8")
+
+    return None
+
+
 def extract_qr_and_links_per_page(pdf_path):
     """
-    Extracts both visual QR code URLs and embedded text hyperlinks
-    (e.g., 'LHDN Validated Link') for each page.
+    Extracts visual QR code URLs and embedded hyperlinks per page.
     Returns: { page_number (1-indexed): url }
     """
     page_urls = {}
@@ -51,7 +82,7 @@ def extract_qr_and_links_per_page(pdf_path):
             page_num = page_idx + 1
             page = doc.load_page(page_idx)
 
-            # 1. Check embedded clickable PDF links (e.g. LHDN Validated Link)
+            # 1. Check embedded clickable PDF links
             for link in page.get_links():
                 uri = link.get("uri", "")
                 if uri and "http" in uri:
@@ -61,7 +92,7 @@ def extract_qr_and_links_per_page(pdf_path):
             if page_num in page_urls:
                 continue
 
-            # 2. Check visual QR code image
+            # 2. Render page at 300 DPI for high-resolution scan analysis
             pix = page.get_pixmap(dpi=300)
             img_data = np.frombuffer(pix.samples, dtype=np.uint8)
             img = img_data.reshape(pix.h, pix.w, pix.n)
@@ -71,12 +102,9 @@ def extract_qr_and_links_per_page(pdf_path):
             else:
                 img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
-            decoded_objects = decode(img)
-            for obj in decoded_objects:
-                url = obj.data.decode("utf-8")
-                if "http" in url:
-                    page_urls[page_num] = url
-                    break
+            url = extract_qr_from_scan(img)
+            if url and "http" in url:
+                page_urls[page_num] = url
     except Exception as e:
         print(f" [Link/QR Extraction Error]: {e}")
     return page_urls
@@ -84,20 +112,19 @@ def extract_qr_and_links_per_page(pdf_path):
 
 def get_uuid_from_url(url, driver=None):
     """
-    Extracts LHDN UUID from URL regex directly or renders page via Selenium fallback.
-    Handles standard GUIDs and 26-30 char alphanumeric e-Invoice identifiers.
+    Extracts LHDN UUID from URL string directly or loads via Selenium fallback.
+    Handles standard GUIDs and 26-36 char alphanumeric e-Invoice identifiers.
     """
     if not url:
         return ""
 
-    # 1. Direct Regex check from the URL query/path (avoids browser if present)
-    # Check standard UUID or long alphanumeric ID in the URL endpoint
+    # 1. Fast regex extraction from URL query or path
     url_segment = url.split("?")[0].split("/")[-1]
     match = re.search(r"([A-Z0-9]{20,36})", url_segment, re.IGNORECASE)
     if match:
         return match.group(1)
 
-    # 2. Browser Fallback
+    # 2. Headless Browser fallback
     local_driver = False
     if driver is None:
         try:
@@ -109,18 +136,15 @@ def get_uuid_from_url(url, driver=None):
 
     try:
         driver.get(url)
-        time.sleep(4)  # Wait for LHDN dynamic validation page to populate
+        time.sleep(4)
         page_text = driver.find_element("tag name", "body").text
 
-        # Search for standard hyphenated UUID or raw alphanumeric invoice ID
         match = re.search(
             r"([0-9a-zA-Z]{8}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{12})",
             page_text,
         )
         if not match:
-            match = re.search(
-                r"([A-Z0-9]{24,36})", page_text
-            )  # LHDN base32 style
+            match = re.search(r"([A-Z0-9]{24,36})", page_text)
         if not match:
             match = re.search(
                 r"UUID[:\s]*([a-zA-Z0-9-]+)", page_text, re.IGNORECASE
@@ -137,7 +161,7 @@ def get_uuid_from_url(url, driver=None):
 
 def extract_with_ai(pdf_path, api_key=""):
     """
-    Sends the multi-page PDF to Gemini to extract all invoices as an array of objects.
+    Uploads the multi-page PDF to Gemini to extract all invoice records as a JSON array.
     """
     try:
         sample_file = genai.upload_file(
@@ -148,10 +172,10 @@ def extract_with_ai(pdf_path, api_key=""):
             time.sleep(1)
             sample_file = genai.get_file(sample_file.name)
 
-        model = genai.GenerativeModel("gemini-3-flash-preview")
+        model = genai.GenerativeModel("gemini-3.5-flash")
 
         prompt = """
-        This PDF document may contain ONE or MULTIPLE separate invoices.
+        This PDF document contains ONE or MULTIPLE separate invoices.
         Extract every invoice found in the document into a JSON array of objects.
 
         Return strictly a JSON array matching this format:
@@ -164,13 +188,14 @@ def extract_with_ai(pdf_path, api_key=""):
                 "Date": "",
                 "Invoice No": "",
                 "Invoice Date": "",
-                "UUID": "Extract any 26-36 char UUID/Validation ID if printed on page, else empty",
-                "Total MYR": "Grand Total amount as number or formatted string"
+                "UUID": "Extract 26-36 char validation UUID or alphanumeric ID if printed anywhere near footers/stamps, else empty string",
+                "Validation Link": "Extract raw URL if printed as text, else empty string",
+                "Total MYR": "Grand Total amount"
             }
         ]
 
         Rules:
-        - "Page Number": The physical PDF page number (1-indexed) where the total or validation stamp of this invoice appears.
+        - "Page Number": The physical PDF page number (1-indexed) where the invoice total or signature appears.
         - Ensure every distinct invoice has its own entry.
         """
 
@@ -195,7 +220,7 @@ def extract_with_ai(pdf_path, api_key=""):
 
 def process_single_invoice(pdf_bytes, filename, api_key):
     """
-    Main pipeline to process an uploaded multi-invoice PDF.
+    Main processing pipeline for multi-invoice PDF files.
     """
     genai.configure(api_key=api_key)
 
@@ -205,10 +230,10 @@ def process_single_invoice(pdf_bytes, filename, api_key):
 
     driver = None
     try:
-        # 1. Scan every page for visual QR codes and clickable embedded links
+        # 1. Scan physical/visual QR codes and embedded links per page
         page_urls = extract_qr_and_links_per_page(temp_path)
 
-        # 2. Extract UUID for every detected link
+        # 2. Resolve UUIDs from URLs
         page_uuids = {}
         if page_urls:
             try:
@@ -222,13 +247,20 @@ def process_single_invoice(pdf_bytes, filename, api_key):
         # 3. Extract invoice header data via Gemini
         ai_invoices = extract_with_ai(temp_path, api_key=api_key)
 
-        # 4. Map extracted data rows
+        # 4. Consolidate results
         rows = []
         for inv in ai_invoices:
             page_no = inv.get("Page Number", 1)
 
-            # Look up scanned UUID on this page; fallback to AI-detected UUID
+            # Match scanned QR/link UUID first
             scanned_uuid = page_uuids.get(page_no, "")
+
+            # If no QR was found on the page, try AI-extracted link or printed UUID
+            if not scanned_uuid:
+                ai_link = inv.get("Validation Link", "")
+                if ai_link:
+                    scanned_uuid = get_uuid_from_url(ai_link, driver=driver)
+
             resolved_uuid = (
                 scanned_uuid
                 if (scanned_uuid and scanned_uuid not in ["Not Found", "Error"])
