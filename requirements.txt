@@ -15,3 +15,11 @@ webdriver-manager
 numpy
 google-genai
 pypdf
+streamlit
+PyMuPDF
+opencv-python-headless
+numpy
+pandas
+pyzbar
+google-generativeai
+selenium
