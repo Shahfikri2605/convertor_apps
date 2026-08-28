@@ -10,6 +10,7 @@ pdfplumber
 pymupdf
 opencv-python-headless
 pyzbar
+fitz
 selenium
 webdriver-manager
 numpy
