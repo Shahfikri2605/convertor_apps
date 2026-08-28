@@ -108,7 +108,10 @@ def process_single_invoice(pdf_bytes, filename, api_key):
         for item in items:
             row = {
                 "FileName": filename,
+                "Supplier Name":ai_data.get("Supplier Name", ""),
                 "Bill To": ai_data.get("Bill To", ""),
+                "PO No": ai_data.get("PO No", ""),
+                "Date":ai_data.get("Date", ""),
                 "Invoice No.": ai_data.get("Invoice No", ""),
                 "Invoice Date": ai_data.get("Invoice Date", ""),
                 "UUID": ai_data.get("UUID", uuid if uuid else ""), # Use scanned UUID if AI misses it
@@ -153,6 +156,9 @@ def extract_with_ai(pdf_path, found_uuid=None, api_key=""):
         JSON Structure:
         {{
             "Bill To": "",
+            "Supplier Name": "",
+            "PO No": "",
+            "Date": "",
             "Invoice No": "",
             "Invoice Date": "",
             {uuid_instruction}
