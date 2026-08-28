@@ -115,7 +115,7 @@ def extract_with_ai(pdf_path, found_uuid=None, api_key=""):
             time.sleep(1)
             sample_file = genai.get_file(sample_file.name)
 
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-3-flash-preview")
 
         uuid_instruction = ""
         if not found_uuid or found_uuid in ["Not Found", "Error"]:
