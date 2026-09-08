@@ -4,23 +4,49 @@ import re
 import tempfile
 import time
 import cv2
-import fitz  # PyMuPDF
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import numpy as np
 import pandas as pd
-from pyzbar.pyzbar import decode
+import pymupdf  # Replaced deprecated import fitz
+from pydantic import BaseModel, Field
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
 
+# --- Schema Definition for Gemini Structured Output ---
+class InvoiceItem(BaseModel):
+    page_number: int = Field(
+        ...,
+        description="Physical 1-indexed PDF page number where this invoice or total appears",
+    )
+    supplier_name: str = Field(default="", description="Supplier or vendor name")
+    bill_to: str = Field(default="", description="Customer or Bill To entity")
+    po_no: str = Field(default="", description="Purchase Order Number")
+    date: str = Field(default="", description="General document date")
+    invoice_no: str = Field(default="", description="Invoice Number")
+    invoice_date: str = Field(default="", description="Date of the invoice")
+    uuid: str = Field(
+        default="",
+        description="Extract 26-36 char validation UUID or alphanumeric ID printed anywhere near footers/stamps",
+    )
+    validation_link: str = Field(
+        default="",
+        description="Extract raw validation URL if printed as text",
+    )
+    total_myr: str = Field(default="", description="Grand Total amount")
+
+
 def get_driver():
-    """Initializes Selenium Chrome driver compatible with Local and Streamlit Cloud."""
+    """Initializes headless Selenium Chrome driver compatible with Local and Streamlit Cloud."""
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--single-process")
     chrome_options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
@@ -38,34 +64,44 @@ def get_driver():
     return webdriver.Chrome(service=service, options=chrome_options)
 
 
+def _decode_with_cv2(image):
+    """Helper to detect and decode QR codes using OpenCV's built-in detector."""
+    detector = cv2.QRCodeDetector()
+    data, _, _ = detector.detectAndDecode(image)
+    return data.strip() if data else None
+
+
 def extract_qr_from_scan(image_bgr):
-    """Tries multiple image-processing techniques to detect faint/scanned QR codes."""
+    """
+    Tries multiple image-processing techniques using OpenCV to detect faint/scanned QR codes
+    without requiring system-level C-library dependencies (libzbar).
+    """
     # 1. Direct pass
-    decoded = decode(image_bgr)
-    if decoded:
-        return decoded[0].data.decode("utf-8")
+    val = _decode_with_cv2(image_bgr)
+    if val:
+        return val
 
     # 2. Grayscale + CLAHE Contrast Boost
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
-    decoded = decode(enhanced)
-    if decoded:
-        return decoded[0].data.decode("utf-8")
+    val = _decode_with_cv2(enhanced)
+    if val:
+        return val
 
     # 3. Adaptive Thresholding (removes scan shadows/paper background noise)
     thresh = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 10
     )
-    decoded = decode(thresh)
-    if decoded:
-        return decoded[0].data.decode("utf-8")
+    val = _decode_with_cv2(thresh)
+    if val:
+        return val
 
     # 4. Otsu Binarization
     _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    decoded = decode(otsu)
-    if decoded:
-        return decoded[0].data.decode("utf-8")
+    val = _decode_with_cv2(otsu)
+    if val:
+        return val
 
     return None
 
@@ -77,7 +113,7 @@ def extract_qr_and_links_per_page(pdf_path):
     """
     page_urls = {}
     try:
-        doc = fitz.open(pdf_path)
+        doc = pymupdf.open(pdf_path)
         for page_idx in range(len(doc)):
             page_num = page_idx + 1
             page = doc.load_page(page_idx)
@@ -161,57 +197,37 @@ def get_uuid_from_url(url, driver=None):
 
 def extract_with_ai(pdf_path, api_key=""):
     """
-    Uploads the multi-page PDF to Gemini to extract all invoice records as a JSON array.
+    Uploads the multi-page PDF using the google-genai SDK to extract
+    all invoice records as a strictly validated list of objects.
     """
     try:
-        sample_file = genai.upload_file(
-            path=pdf_path, display_name="Invoices PDF"
-        )
+        client = genai.Client(api_key=api_key)
 
-        while sample_file.state.name == "PROCESSING":
+        # Upload file via modern Files API
+        uploaded_file = client.files.upload(file=pdf_path)
+
+        while uploaded_file.state.name == "PROCESSING":
             time.sleep(1)
-            sample_file = genai.get_file(sample_file.name)
+            uploaded_file = client.files.get(name=uploaded_file.name)
 
-        model = genai.GenerativeModel("gemini-3.5-flash")
-
-        prompt = """
-        This PDF document contains ONE or MULTIPLE separate invoices.
-        Extract every invoice found in the document into a JSON array of objects.
-
-        Return strictly a JSON array matching this format:
-        [
-            {
-                "Page Number": 1,
-                "Supplier Name": "",
-                "Bill To": "",
-                "PO No": "",
-                "Date": "",
-                "Invoice No": "",
-                "Invoice Date": "",
-                "UUID": "Extract 26-36 char validation UUID or alphanumeric ID if printed anywhere near footers/stamps, else empty string",
-                "Validation Link": "Extract raw URL if printed as text, else empty string",
-                "Total MYR": "Grand Total amount"
-            }
-        ]
-
-        Rules:
-        - "Page Number": The physical PDF page number (1-indexed) where the invoice total or signature appears.
-        - Ensure every distinct invoice has its own entry.
-        """
-
-        response = model.generate_content([sample_file, prompt])
-        raw_text = (
-            response.text.replace("```json", "").replace("```", "").strip()
+        prompt = (
+            "This PDF document contains ONE or MULTIPLE separate invoices. "
+            "Extract every distinct invoice found in the document according to the schema. "
+            "Make sure 'page_number' corresponds to the physical page where the invoice total or signature appears."
         )
 
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            start = raw_text.find("[")
-            end = raw_text.rfind("]") + 1
-            data = json.loads(raw_text[start:end])
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[uploaded_file, prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=list[InvoiceItem],
+                temperature=0.1,
+            ),
+        )
 
-        return data if isinstance(data, list) else [data]
+        raw_json = json.loads(response.text)
+        return raw_json if isinstance(raw_json, list) else [raw_json]
 
     except Exception as e:
         print(f" [AI Error]: {e}")
@@ -222,8 +238,6 @@ def process_single_invoice(pdf_bytes, filename, api_key):
     """
     Main processing pipeline for multi-invoice PDF files.
     """
-    genai.configure(api_key=api_key)
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(pdf_bytes)
         temp_path = tmp.name
@@ -250,33 +264,33 @@ def process_single_invoice(pdf_bytes, filename, api_key):
         # 4. Consolidate results
         rows = []
         for inv in ai_invoices:
-            page_no = inv.get("Page Number", 1)
+            page_no = inv.get("page_number", 1)
 
             # Match scanned QR/link UUID first
             scanned_uuid = page_uuids.get(page_no, "")
 
-            # If no QR was found on the page, try AI-extracted link or printed UUID
+            # Fallback to AI-extracted link or printed UUID
             if not scanned_uuid:
-                ai_link = inv.get("Validation Link", "")
+                ai_link = inv.get("validation_link", "")
                 if ai_link:
                     scanned_uuid = get_uuid_from_url(ai_link, driver=driver)
 
             resolved_uuid = (
                 scanned_uuid
                 if (scanned_uuid and scanned_uuid not in ["Not Found", "Error"])
-                else inv.get("UUID", "")
+                else inv.get("uuid", "")
             )
 
             row = {
                 "FileName": filename,
-                "PO No": inv.get("PO No", ""),
-                "Date": inv.get("Date", ""),
-                "Invoice No.": inv.get("Invoice No", ""),
-                "Invoice Date": inv.get("Invoice Date", ""),
+                "PO No": inv.get("po_no", ""),
+                "Date": inv.get("date", ""),
+                "Invoice No.": inv.get("invoice_no", ""),
+                "Invoice Date": inv.get("invoice_date", ""),
                 "UUID": resolved_uuid,
-                "Total MYR": inv.get("Total MYR", ""),
-                "Supplier Name": inv.get("Supplier Name", ""),
-                "Bill To": inv.get("Bill To", ""),
+                "Total MYR": inv.get("total_myr", ""),
+                "Supplier Name": inv.get("supplier_name", ""),
+                "Bill To": inv.get("bill_to", ""),
             }
             rows.append(row)
 
