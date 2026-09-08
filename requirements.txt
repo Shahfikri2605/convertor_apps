@@ -6,6 +6,7 @@ openpyxl
 xlsxwriter
 gspread
 oauth2client
+google-generativeai
 google-genai
 pydantic
 pymupdf
