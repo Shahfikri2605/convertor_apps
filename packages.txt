@@ -1,3 +1,4 @@
+-o Acquire::Check-Valid-Until=false
 libzbar0
 chromium
 chromium-chromedriver
