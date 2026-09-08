@@ -8,7 +8,7 @@ from google import genai
 from google.genai import types
 import numpy as np
 import pandas as pd
-import pymupdf  # Replaced deprecated import fitz
+import pymupdf
 from pydantic import BaseModel, Field
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -46,18 +46,22 @@ def get_driver():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--single-process")
+    # DO NOT use --single-process; it causes Chromium container crashes
     chrome_options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 
-    # Streamlit Cloud Debian Path
+    # Streamlit Cloud Debian Chromium Path
     if os.path.exists("/usr/bin/chromium"):
         chrome_options.binary_location = "/usr/bin/chromium"
         service = Service("/usr/bin/chromedriver")
         return webdriver.Chrome(service=service, options=chrome_options)
+    elif os.path.exists("/usr/bin/chromium-browser"):
+        chrome_options.binary_location = "/usr/bin/chromium-browser"
+        service = Service("/usr/bin/chromedriver")
+        return webdriver.Chrome(service=service, options=chrome_options)
 
-    # Local Fallback (Windows / Mac)
+    # Local Fallback (Windows / macOS)
     from webdriver_manager.chrome import ChromeDriverManager
 
     service = Service(ChromeDriverManager().install())
@@ -65,17 +69,14 @@ def get_driver():
 
 
 def _decode_with_cv2(image):
-    """Helper to detect and decode QR codes using OpenCV's built-in detector."""
+    """Detects and decodes QR codes using OpenCV's built-in detector."""
     detector = cv2.QRCodeDetector()
     data, _, _ = detector.detectAndDecode(image)
     return data.strip() if data else None
 
 
 def extract_qr_from_scan(image_bgr):
-    """
-    Tries multiple image-processing techniques using OpenCV to detect faint/scanned QR codes
-    without requiring system-level C-library dependencies (libzbar).
-    """
+    """Tries multiple image-processing techniques using OpenCV to detect faint/scanned QR codes."""
     # 1. Direct pass
     val = _decode_with_cv2(image_bgr)
     if val:
@@ -89,7 +90,7 @@ def extract_qr_from_scan(image_bgr):
     if val:
         return val
 
-    # 3. Adaptive Thresholding (removes scan shadows/paper background noise)
+    # 3. Adaptive Thresholding
     thresh = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 10
     )
@@ -141,6 +142,7 @@ def extract_qr_and_links_per_page(pdf_path):
             url = extract_qr_from_scan(img)
             if url and "http" in url:
                 page_urls[page_num] = url
+        doc.close()
     except Exception as e:
         print(f" [Link/QR Extraction Error]: {e}")
     return page_urls
@@ -172,7 +174,7 @@ def get_uuid_from_url(url, driver=None):
 
     try:
         driver.get(url)
-        time.sleep(4)
+        time.sleep(3)
         page_text = driver.find_element("tag name", "body").text
 
         match = re.search(
@@ -203,8 +205,10 @@ def extract_with_ai(pdf_path, api_key=""):
     try:
         client = genai.Client(api_key=api_key)
 
-        # Upload file via modern Files API
-        uploaded_file = client.files.upload(file=pdf_path)
+        uploaded_file = client.files.upload(
+            file=pdf_path,
+            config=types.UploadFileConfig(mime_type="application/pdf"),
+        )
 
         while uploaded_file.state.name == "PROCESSING":
             time.sleep(1)
@@ -213,7 +217,7 @@ def extract_with_ai(pdf_path, api_key=""):
         prompt = (
             "This PDF document contains ONE or MULTIPLE separate invoices. "
             "Extract every distinct invoice found in the document according to the schema. "
-            "Make sure 'page_number' corresponds to the physical page where the invoice total or signature appears."
+            "Make sure 'page_number' corresponds to the physical 1-indexed page where the invoice total or signature appears."
         )
 
         response = client.models.generate_content(
@@ -226,6 +230,12 @@ def extract_with_ai(pdf_path, api_key=""):
             ),
         )
 
+        # Delete the uploaded file from Google storage after inference
+        try:
+            client.files.delete(name=uploaded_file.name)
+        except Exception:
+            pass
+
         raw_json = json.loads(response.text)
         return raw_json if isinstance(raw_json, list) else [raw_json]
 
@@ -235,9 +245,7 @@ def extract_with_ai(pdf_path, api_key=""):
 
 
 def process_single_invoice(pdf_bytes, filename, api_key):
-    """
-    Main processing pipeline for multi-invoice PDF files.
-    """
+    """Main processing pipeline for multi-invoice PDF files."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(pdf_bytes)
         temp_path = tmp.name
@@ -252,7 +260,8 @@ def process_single_invoice(pdf_bytes, filename, api_key):
         if page_urls:
             try:
                 driver = get_driver()
-            except Exception:
+            except Exception as e:
+                print(f" [Selenium Driver Launch Error]: {e}")
                 driver = None
 
             for page_no, url in page_urls.items():
