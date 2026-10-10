@@ -824,7 +824,7 @@ def main_app_interface(authenticator, name, permissions):
                             
                             # Create a specific download button just for this mode
                             st.download_button(
-                                label="📥 Download Perfectly Formatted Excel",
+                                label="📥 Download Excel",
                                 data=excel_data,
                                 file_name="Zenxin_Sales_Report_Formatted.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
