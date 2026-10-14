@@ -29,6 +29,7 @@ import ntuc_batch_po_processor
 import importlib
 import cs_giant_processor
 import po_report_jb
+import ewallet
 
 # Force Python to use the latest code in cs_giant_processor.py
 importlib.reload(cs_giant_processor)
@@ -76,7 +77,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Invoice(UUID)", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP","Cold Storage / Giant (SG)","NTUC Batch PO Combiner","PO Report JB"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Invoice(UUID)", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP","Cold Storage / Giant (SG)","NTUC Batch PO Combiner","PO Report JB","E-Wallet(Combine)"], index=0)
 
         st.markdown("---")
 
@@ -829,6 +830,72 @@ def main_app_interface(authenticator, name, permissions):
                                 file_name="Zenxin_Sales_Report_Formatted.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
+        elif mode == "E-Wallet(Combine)":
+            st.info("ℹ️ Mode: E-Wallet Settlement Consolidator (Fast & Rule-based).")
+
+            uploaded_files = st.file_uploader("Choose a Excel file", type="xlsx",accept_multiple_files=True)
+            
+            if st.button("Extract & Combine Settlements", type="primary"):
+                if not uploaded_files:
+                    st.warning("Please upload at least one Excel file (.xlsx).")
+                else:
+                    progress_bar = st.progress(0)
+                    all_dfs = []
+                    
+                    for i, file_obj in enumerate(uploaded_files):
+                        st.write(f"Processing: {file_obj.name}")
+                        
+                        try:
+                            # Pass the file object directly (or BytesIO) and its filename
+                            df = ewallet.process_single_settlement_file(file_obj, file_obj.name)
+                            if df is not None and not df.empty:
+                                all_dfs.append(df)
+                            else:
+                                st.warning(f"No valid transaction data found in {file_obj.name}")
+                                
+                        except Exception as e:
+                            st.error(f"Error on {file_obj.name}: {e}")
+                        
+                        progress_bar.progress((i + 1) / len(uploaded_files))
+                    
+                    if all_dfs:
+                        # Combine all uploaded files into one DataFrame
+                        final_df = pd.concat(all_dfs, ignore_index=True)
+                        
+                        # Sort chronologically by Transaction Datetime
+                        dt_parsed = pd.to_datetime(final_df['Transaction Datetime'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                        final_df = (
+                            final_df.assign(_sort_dt=dt_parsed)
+                            .sort_values(by='_sort_dt')
+                            .drop(columns=['_sort_dt'])
+                            .reset_index(drop=True)
+                        )
+                        
+                        st.success("✅ Processing Complete!")
+                        
+                        # Quick metrics summary
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Total Transactions", f"{len(final_df):,}")
+                        m2.metric("Total Amount (RM)", f"{final_df['Transaction Amount'].sum():,.2f}")
+                        m3.metric("Unique Outlets", final_df['Outlet'].nunique())
+                        
+                        # Preview Table
+                        st.subheader("Preview Data")
+                        st.dataframe(
+                            final_df.style.format({"Transaction Amount": "{:,.2f}"}),
+                            use_container_width=True
+                        )
+                        
+                        # Generate formatted Excel file
+                        excel_data = ewallet.export_settlements_to_excel(final_df)
+                        
+                        # Download button
+                        st.download_button(
+                            label="📥 Download Consolidated Settlements Excel",
+                            data=excel_data,
+                            file_name="Consolidated_EWallet_Settlement_Report.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
             
