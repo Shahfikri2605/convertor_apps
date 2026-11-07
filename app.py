@@ -30,6 +30,8 @@ import importlib
 import cs_giant_processor
 import po_report_jb
 import ewallet
+import ss_sales_combine
+import staging_transfer
 
 # Force Python to use the latest code in cs_giant_processor.py
 importlib.reload(cs_giant_processor)
@@ -77,7 +79,7 @@ def main_app_interface(authenticator, name, permissions):
         authenticator.logout('Logout', 'sidebar')
         st.divider()
         st.header("Settings")
-        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Invoice(UUID)", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP","Cold Storage / Giant (SG)","NTUC Batch PO Combiner","PO Report JB","E-Wallet(Combine)"], index=0)
+        mode = st.radio("Select Mode", ["Standard Extraction", "Invoice with QR (UUID)", "Maslee", "Aeon Invoice(UUID)", "Aeon Sales & Commission", "TFP/Global", "Urban (AI)", "Jaya Grocer (AI)", "iSetan (AI)","Kastam (AI)","Boost","Public Bank (PBB)","Data Cleaner (Excel)","Lazada Payout Combiner", "JB Sales Report","NTUC combiner","BGCP","Cold Storage / Giant (SG)","NTUC Batch PO Combiner","PO Report JB","E-Wallet(Combine)","SS Sales Combine","SK Transfer to Item Journal"], index=0)
 
         st.markdown("---")
 
@@ -230,6 +232,38 @@ def main_app_interface(authenticator, name, permissions):
                     )
                 else:
                     st.error("No valid AEON data found in uploaded files.")
+        elif mode == "SK Transfer to Item Journal":
+            st.info("ℹ️ Mode: Convert SK Transfer to Shah Stock with auto running Document No. (CON26-XXXX).")
+            
+            start_num = st.number_input("Starting Sequence No. (e.g. 1 for CON26-0001):", min_value=1, value=1, step=1)
+            uploaded_file = st.file_uploader("Upload SK Transfer Excel File", type=["xlsx", "xls"], key="sk_transfer_uploader")
+            
+            if uploaded_file:
+                if st.button("Convert to Shah Stock Journal", type="primary"):
+                    with st.spinner("Generating journal lines and mapping running numbers..."):
+                        excel_output, df_preview = staging_transfer.convert_sk_transfer_to_shah_stock(uploaded_file, start_seq=int(start_num))
+                    
+                    if not df_preview.empty:
+                        st.success(f"✅ Generated {len(df_preview):,} journal lines! (Mapped {df_preview['Document No.'].nunique()} unique transfer documents)")
+                        
+                        # Metrics
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Total Journal Entries", f"{len(df_preview):,}")
+                        c1_docs = df_preview['Document No.'].unique()
+                        c2.metric("First Document No.", c1_docs[0] if len(c1_docs) else "-")
+                        c3.metric("Last Document No.", c1_docs[-1] if len(c1_docs) else "-")
+                        
+                        # Preview Table
+                        st.subheader("Preview Item Journal")
+                        st.dataframe(df_preview.head(20), use_container_width=True)
+                        
+                        # Download Button
+                        st.download_button(
+                            label="📥 Download Converted Stock Excel",
+                            data=excel_output,
+                            file_name="Converted_Stock_Journal.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
         elif mode == "Urban (AI)":
             st.info("ℹ️ Mode: Urban Grocery (Full AI Scan + Cleaning).")
 
@@ -896,6 +930,60 @@ def main_app_interface(authenticator, name, permissions):
                             file_name="Consolidated_EWallet_Settlement_Report.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
+        elif mode == "SS Sales Combine":
+            st.info("ℹ️ Mode: Combine ZAO Item Sheets (FRUITS_ITEM & VEG-ECOM_ITEM).")
+            
+            uploaded_file = st.file_uploader("Upload ZAO Excel File", type=["xlsx", "xls"], key="zao_uploader")
+            
+            if uploaded_file:
+                # Inspect available sheets
+                xls = pd.ExcelFile(uploaded_file)
+                item_sheets = [s for s in xls.sheet_names if "_ITEM" in s.upper()]
+                
+                # Let user choose sheets (defaults to the two you requested)
+                default_selection = [s for s in ['ZAO (FRUITS)_ITEM', 'ZAO (VEG)-ECOM_ITEM'] if s in xls.sheet_names]
+                selected_sheets = st.multiselect(
+                    "Select Sheets to Combine:", 
+                    options=item_sheets if item_sheets else xls.sheet_names, 
+                    default=default_selection
+                )
+                
+                if st.button("Combine Selected Sheets", type="primary"):
+                    if not selected_sheets:
+                        st.warning("Please select at least one sheet to extract.")
+                    else:
+                        with st.spinner("Extracting and combining data..."):
+                            df_combined = ss_sales_combine.process_zao_item_sheets(uploaded_file, target_sheets=selected_sheets)
+                        
+                        if not df_combined.empty:
+                            st.success(f"✅ Successfully combined {len(df_combined):,} rows from {len(selected_sheets)} sheet(s)!")
+                            
+                            # Quick Metrics
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("Total Records", f"{len(df_combined):,}")
+                            c2.metric("Total Quantity", f"{df_combined['QTY'].sum():,.2f}")
+                            c3.metric("Total Sales Bef GST", f"${df_combined['SALES BEF GST'].sum():,.2f}")
+                            
+                            # Preview Data
+                            st.subheader("Preview Combined Data")
+                            st.dataframe(
+                                df_combined.head(20).style.format({
+                                    "QTY": "{:,.2f}",
+                                    "SALES BEF GST": "${:,.2f}"
+                                }),
+                                use_container_width=True
+                            )
+                            
+                            # Download Button
+                            excel_output = ss_sales_combine.export_zao_to_excel(df_combined)
+                            st.download_button(
+                                label="📥 Download Combined ZAO Excel",
+                                data=excel_output,
+                                file_name="ZAO_Combined_Items.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        else:
+                            st.warning("No valid data rows found in the selected sheets.")
         else:
             st.info("ℹ️ Mode: Standard AI Extraction")
             
