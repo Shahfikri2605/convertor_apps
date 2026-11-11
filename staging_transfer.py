@@ -37,7 +37,7 @@ def convert_sk_transfer_to_shah_stock(file_input, start_seq=1):
     for doc in df_src['External Document No.'].dropna():
         doc_str = str(doc).strip()
         if doc_str and doc_str not in doc_mapping:
-            doc_mapping[doc_str] = f"CON26-{current_counter:04d}"
+            doc_mapping[doc_str] = f"CON27-{current_counter:010d}"
             current_counter += 1
             
     journal_rows = []
@@ -47,7 +47,7 @@ def convert_sk_transfer_to_shah_stock(file_input, start_seq=1):
         orig_doc_no = str(row.get('External Document No.', '')).strip()
         
         # Auto-assigned CON26-XXXX format
-        running_doc_no = doc_mapping.get(orig_doc_no, f"CON26-{current_counter:04d}")
+        running_doc_no = doc_mapping.get(orig_doc_no, f"CON27-{current_counter:04d}")
         
         item_no = row.get('Item No.', '')
         if pd.notna(item_no) and isinstance(item_no, (int, float)):
