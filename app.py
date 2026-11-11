@@ -233,9 +233,9 @@ def main_app_interface(authenticator, name, permissions):
                 else:
                     st.error("No valid AEON data found in uploaded files.")
         elif mode == "SK Transfer to Item Journal":
-            st.info("ℹ️ Mode: Convert SK Transfer to Shah Stock with auto running Document No. (CON26-XXXX).")
+            st.info("ℹ️ Mode: Convert SK Transfer to Item Journal with auto running Document No. (CON27-XXXX).")
             
-            start_num = st.number_input("Starting Sequence No. (e.g. 1 for CON26-0001):", min_value=1, value=1, step=1)
+            start_num = st.number_input("Starting Sequence No. (e.g. 1 for CON27-0001):", min_value=1, value=1, step=1)
             uploaded_file = st.file_uploader("Upload SK Transfer Excel File", type=["xlsx", "xls"], key="sk_transfer_uploader")
             
             if uploaded_file:
