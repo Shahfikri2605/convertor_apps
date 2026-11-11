@@ -239,7 +239,7 @@ def main_app_interface(authenticator, name, permissions):
             uploaded_file = st.file_uploader("Upload SK Transfer Excel File", type=["xlsx", "xls"], key="sk_transfer_uploader")
             
             if uploaded_file:
-                if st.button("Convert to Shah Stock Journal", type="primary"):
+                if st.button("Convert to Item Journal", type="primary"):
                     with st.spinner("Generating journal lines and mapping running numbers..."):
                         excel_output, df_preview = staging_transfer.convert_sk_transfer_to_shah_stock(uploaded_file, start_seq=int(start_num))
                     
